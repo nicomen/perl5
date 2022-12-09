@@ -7535,37 +7535,7 @@ yyl_just_a_word(pTHX_ char *s, STRLEN len, I32 orig_keyword, struct code c)
 
     /* Get the rest if it looks like a package qualifier */
 
-// WIP
     if (*s == '\'' || (*s == ':' && s[1] == ':')) {
-/*        if (UNLIKELY(*s == '\'' && ckWARN(WARN_SYNTAX))) {
-            PerlIO_printf(Perl_debug_log, "LOL\n");
-            const char *olds = s;
-            char *this_d;
-            char *d2;
-            Newx(this_d, s - olds + 2, char);
-            d2 = this_d;
-            SAVEFREEPV(this_d);
-           *d2++ = olds[-1];
-            while (*olds < *s) {
-                if (*olds == '\'') {
-                  *d2++ = ':';
-                  *d2++ = ':';
-                  olds++;
-                }
-            }
-            *d2++ = *olds++;
-
-            PerlIO_printf(Perl_debug_log, "W: %s - %s - %ld - %s\n", s, PL_tokenbuf, len, olds);
-            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                "Old package separator used");
-            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                       "\t(Did you mean \"%" UTF8f "\" instead?)\n",
-                        UTF8fARG(UTF, d2-this_d, this_d)); */
-/*            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                       "\t(Did you mean %" UTF8f " instead?)\n",
-                        UTF8fARG(UTF, len, PL_tokenbuf)); */
-        /*}*/
-
         STRLEN morelen;
         s = scan_word(s, PL_tokenbuf + len, sizeof PL_tokenbuf - len,
                       TRUE, &morelen);
