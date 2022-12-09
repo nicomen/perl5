@@ -4502,6 +4502,12 @@ C<sysread()>ing a file, or when seeking past the end of a scalar opened
 for I/O (in anticipation of future reads and to imitate the behavior
 with real files).
 
+=item Old package separator used
+
+(W syntax) You used the old package separator, "'" in an identifier.
+This notation is deprecated and will disappear from Perl in the next stable version.
+Use the supported package separator "::" by changing e.g. C<Foo'Bar> to C<Foo::Bar> 
+
 =item Old package separator used in string
 
 (W syntax) You used the old package separator, "'", in a variable

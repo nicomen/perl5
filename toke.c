@@ -5334,7 +5334,7 @@ yyl_sub(pTHX_ char *s, const int key)
     if (   isIDFIRST_lazy_if_safe(s, PL_bufend, UTF)
         || *s == '\''
         || (*s == ':' && s[1] == ':'))
-    {
+    { // nicomen: warn on sub
 
         PL_expect = XATTRBLOCK;
         d = scan_word(s, tmpbuf, sizeof PL_tokenbuf - 1, TRUE,
@@ -7518,7 +7518,37 @@ yyl_just_a_word(pTHX_ char *s, STRLEN len, I32 orig_keyword, struct code c)
 
     /* Get the rest if it looks like a package qualifier */
 
+// WIP
     if (*s == '\'' || (*s == ':' && s[1] == ':')) {
+/*        if (UNLIKELY(*s == '\'' && ckWARN(WARN_SYNTAX))) {
+            PerlIO_printf(Perl_debug_log, "LOL\n");
+            const char *olds = s;
+            char *this_d;
+            char *d2;
+            Newx(this_d, s - olds + 2, char);
+            d2 = this_d;
+            SAVEFREEPV(this_d);
+           *d2++ = olds[-1];
+            while (*olds < *s) {
+                if (*olds == '\'') {
+                  *d2++ = ':';
+                  *d2++ = ':';
+                  olds++;
+                }
+            }
+            *d2++ = *olds++;
+
+            PerlIO_printf(Perl_debug_log, "W: %s - %s - %ld - %s\n", s, PL_tokenbuf, len, olds);
+            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                "Old package separator used");
+            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                       "\t(Did you mean \"%" UTF8f "\" instead?)\n",
+                        UTF8fARG(UTF, d2-this_d, this_d)); */
+/*            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                       "\t(Did you mean %" UTF8f " instead?)\n",
+                        UTF8fARG(UTF, len, PL_tokenbuf)); */
+        /*}*/
+
         STRLEN morelen;
         s = scan_word(s, PL_tokenbuf + len, sizeof PL_tokenbuf - len,
                       TRUE, &morelen);
@@ -10034,29 +10064,52 @@ S_parse_ident(pTHX_ char **s, char **d, char * const e, int allow_package,
         else
             break;
     }
-    if (UNLIKELY(tick_warn && saw_tick && PL_lex_state == LEX_INTERPNORMAL
-              && !PL_lex_brackets && ckWARN(WARN_SYNTAX))) {
+//    if (UNLIKELY(tick_warn && saw_tick && PL_lex_state == LEX_INTERPNORMAL
+//             && !PL_lex_brackets && ckWARN(WARN_SYNTAX))) {
+    if (UNLIKELY(saw_tick && ckWARN(WARN_SYNTAX))) {
         char *this_d;
         char *d2;
         Newx(this_d, *s - olds + saw_tick + 2, char); /* +2 for $# */
         d2 = this_d;
         SAVEFREEPV(this_d);
-        Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                         "Old package separator used in string");
+
+        if (tick_warn && PL_lex_state == LEX_INTERPNORMAL && !PL_lex_brackets) {
+            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                "Old package separator used in string");
+        } else {
+            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                "Old package separator used");
+        }
+
         if (olds[-1] == '#')
             *d2++ = olds[-2];
         *d2++ = olds[-1];
         while (olds < *s) {
             if (*olds == '\'') {
-                *d2++ = '\\';
-                *d2++ = *olds++;
+                if (PL_lex_state == LEX_INTERPNORMAL && !PL_lex_brackets) {
+                  *d2++ = '\\';
+                } else {
+                  *d2++ = ':';
+                  *d2++ = ':';
+                  olds++;
+                }
             }
-            else
-                *d2++ = *olds++;
+            *d2++ = *olds++;
         }
-        Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                         "\t(Did you mean \"%" UTF8f "\" instead?)\n",
-                          UTF8fARG(is_utf8, d2-this_d, this_d));
+
+        if (tick_warn && PL_lex_state == LEX_INTERPNORMAL && !PL_lex_brackets) {
+            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                       "\t(Did you mean \"%" UTF8f "\" instead?)\n",
+                        UTF8fARG(is_utf8, d2-this_d, this_d));
+        } else {
+                      S_printbuf("### Saw string before %s\n", *s);
+
+            PerlIO_printf(Perl_debug_log, "W: '%s' - '%ld' - '%s' - '%s' - '%d'\n", this_d, d2-this_d, *d, *s, PL_lex_state);
+            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
+                       "\t(Did you mean %" UTF8f " instead?)\n",
+                        UTF8fARG(is_utf8, d2-this_d, this_d));
+        }
+
     }
     return;
 }
@@ -11184,7 +11237,7 @@ S_scan_inputsymbol(pTHX_ char *start)
     if (*d == '$' && d[1]) d++;
 
     /* allow <Pkg'VALUE> or <Pkg::VALUE> */
-    while (isWORDCHAR_lazy_if_safe(d, e, UTF) || *d == '\'' || *d == ':') {
+    while (isWORDCHAR_lazy_if_safe(d, e, UTF) || *d == '\'' || *d == ':') { // nicomen: Check for \' and warn
         d += UTF ? UTF8SKIP(d) : 1;
     }
 
