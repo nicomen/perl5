@@ -185,10 +185,9 @@ PP(pp_aelemfastlex_store)
 
     /* Inlined, simplified pp_aelemfast here */
     assert(SvTYPE(av) == SVt_PVAV);
-    assert(key >= 0);
 
     /* inlined av_fetch() for simple cases ... */
-    if (!SvRMAGICAL(av) && key <= AvFILLp(av)) {
+    if (!SvRMAGICAL(av) && key >=0 && key <= AvFILLp(av)) {
         targ = AvARRAY(av)[key];
     }
     /* ... else do it the hard way */
@@ -206,13 +205,14 @@ PP(pp_aelemfastlex_store)
     if (UNLIKELY(TAINT_get) && !SvTAINTED(val))
         TAINT_NOT;
 
-    if (
-      UNLIKELY(SvTEMP(targ)) && !SvSMAGICAL(targ) && SvREFCNT(targ) == 1 &&
-      (!isGV_with_GP(targ) || SvFAKE(targ)) && ckWARN(WARN_MISC)
-    )
-        Perl_warner(aTHX_
-            packWARN(WARN_MISC), "Useless assignment to a temporary"
-        );
+    /* This assertion is a deviation from pp_sassign, which uses an if()
+     * condition to check for "Useless assignment to a temporary" and
+     * warns if the condition is true. Here, the condition should NEVER
+     * be true when the LHS is the result of an array fetch. The
+     * assertion is here as a final check that this remains the case.
+     */
+    assert(!(SvTEMP(targ) && SvREFCNT(targ) == 1 && !SvSMAGICAL(targ)));
+
     SvSetMagicSV(targ, val);
 
     SETs(targ);
@@ -5152,7 +5152,8 @@ Perl_clear_defarray(pTHX_ AV* av, bool abandon)
     else {
         const SSize_t size = AvFILLp(av) + 1;
         /* The ternary gives consistency with av_extend() */
-        AV *newav = newAV_alloc_x(size < 4 ? 4 : size);
+        AV *newav = newAV_alloc_x(size < PERL_ARRAY_NEW_MIN_KEY ?
+                                         PERL_ARRAY_NEW_MIN_KEY : size);
         AvREIFY_only(newav);
         PAD_SVl(0) = MUTABLE_SV(newav);
         SvREFCNT_dec_NN(av);

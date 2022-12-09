@@ -1331,7 +1331,8 @@ S_cop_free(pTHX_ COP* cop)
     }
     CopFILE_free(cop);
     if (! specialWARN(cop->cop_warnings))
-        PerlMemShared_free(cop->cop_warnings);
+        cop->cop_warnings = rcpv_free(cop->cop_warnings);
+
     cophh_free(CopHINTHASH_get(cop));
     if (PL_curcop == cop)
        PL_curcop = NULL;
@@ -2124,6 +2125,7 @@ Perl_scalarvoid(pTHX_ OP *arg)
         case OP_REF:
         case OP_REFGEN:
         case OP_SREFGEN:
+        case OP_ANONCODE:
         case OP_DEFINED:
         case OP_HEX:
         case OP_OCT:
@@ -3444,6 +3446,24 @@ Perl_op_lvalue_flags(pTHX_ OP *o, I32 type, U32 flags)
     case OP_SCALAR:
         op_lvalue(cUNOPo->op_first, OP_ENTERSUB);
         goto nomod;
+
+    case OP_ANONCODE:
+        /* If we were to set OPf_REF on this and it was constructed by XS
+         * code as a child of an OP_REFGEN then we'd end up generating a
+         * double-ref when executed. We don't want to do that, so don't
+         * set flag here.
+         *   See also https://github.com/Perl/perl5/issues/20384
+         */
+
+        // Perl always sets OPf_REF as of 5.37.5.
+        //
+        if (LIKELY(o->op_flags & OPf_REF)) goto nomod;
+
+        // If we got here, then our op came from an XS module that predates
+        // 5.37.5’s change to the op tree, which we have to handle a bit
+        // diffrently to preserve backward compatibility.
+        //
+        goto do_next;
     }
 
     /* [20011101.069 (#7861)] File test operators interpret OPf_REF to mean that
@@ -3819,8 +3839,7 @@ S_apply_attrs_my(pTHX_ HV *stash, OP *target, OP *attrs, OP **imopsp)
     /* Build up the real arg-list. */
     stashsv = newSVhek(HvNAME_HEK(stash));
 
-    arg = newOP(OP_PADSV, 0);
-    arg->op_targ = target->op_targ;
+    arg = newPADxVOP(OP_PADSV, 0, target->op_targ);
     arg = op_prepend_elem(OP_LIST,
                        newSVOP(OP_CONST, 0, stashsv),
                        op_prepend_elem(OP_LIST,
@@ -5216,6 +5235,10 @@ OP *
 Perl_op_convert_list(pTHX_ I32 type, I32 flags, OP *o)
 {
     if (type < 0) type = -type, flags |= OPf_SPECIAL;
+    if (type == OP_RETURN) {
+        if (FEATURE_MODULE_TRUE_IS_ENABLED)
+            flags |= OPf_SPECIAL;
+    }
     if (!o || o->op_type != OP_LIST)
         o = force_list(o, FALSE);
     else
@@ -5318,7 +5341,6 @@ present already, so calling C<newLISTOP(OP_JOIN, ...)> (e.g.) is not
 appropriate.  What you want to do in that case is create an op of type
 C<OP_LIST>, append more children to it, and then call L</op_convert_list>.
 See L</op_convert_list> for more information.
-
 
 =cut
 */
@@ -7952,6 +7974,32 @@ S_newONCEOP(pTHX_ OP *initop, OP *padop)
 }
 
 /*
+=for apidoc newARGDEFELEMOP
+
+Constructs and returns a new C<OP_ARGDEFELEM> op which provides a defaulting
+expression given by C<expr> for the signature parameter at the index given
+by C<argindex>. The expression optree is consumed by this function and
+becomes part of the returned optree.
+
+=cut
+*/
+
+OP *
+Perl_newARGDEFELEMOP(pTHX_ I32 flags, OP *expr, I32 argindex)
+{
+    PERL_ARGS_ASSERT_NEWARGDEFELEMOP;
+
+    OP *o = (OP *)alloc_LOGOP(OP_ARGDEFELEM, expr, LINKLIST(expr));
+    o->op_flags |= (U8)(flags);
+    o->op_private = 1 | (U8)(flags >> 8);
+
+    /* re-purpose op_targ to hold @_ index */
+    o->op_targ = (PADOFFSET)(argindex);
+
+    return o;
+}
+
+/*
 =for apidoc newASSIGNOP
 
 Constructs, checks, and returns an assignment op.  C<left> and C<right>
@@ -8216,6 +8264,7 @@ Perl_newSTATEOP(pTHX_ I32 flags, char *label, OP *o)
     cop->cop_seq = seq;
     cop->cop_warnings = DUP_WARNINGS(PL_curcop->cop_warnings);
     CopHINTHASH_set(cop, cophh_copy(CopHINTHASH_get(PL_curcop)));
+    CopFEATURES_setfrom(cop, PL_curcop);
     if (label) {
         Perl_cop_store_label(aTHX_ cop, label, strlen(label), utf8);
 
@@ -8237,7 +8286,7 @@ Perl_newSTATEOP(pTHX_ I32 flags, char *label, OP *o)
         PL_parser->copline = NOLINE;
     }
 #ifdef USE_ITHREADS
-    CopFILE_set(cop, CopFILE(PL_curcop));	/* XXX share in a pvtable? */
+    CopFILE_copy(cop, PL_curcop);
 #else
     CopFILEGV_set(cop, CopFILEGV(PL_curcop));
 #endif
@@ -10804,7 +10853,10 @@ S_process_special_blocks(pTHX_ I32 floor, const char *const fullname,
                 sv_setiv(max_nest_sv, max_nest_iv);
             }
 
-            if (PL_eval_begin_nest_depth >= max_nest_iv) {
+            /* (UV) below is just to silence a compiler warning, and should be
+             * effectively a no-op, as max_nest_iv will never be negative here.
+             */
+            if (PL_eval_begin_nest_depth >= (UV)max_nest_iv) {
                 Perl_croak(aTHX_ "Too many nested BEGIN blocks, maximum of %" IVdf " allowed",
                              max_nest_iv);
             }
@@ -13217,10 +13269,9 @@ Perl_ck_sort(pTHX_ OP *o)
                     kSVOP->op_sv = fq;
                 }
                 else {
-                    OP * const padop = newOP(OP_PADCV, 0);
-                    padop->op_targ = off;
                     /* replace the const op with the pad op */
-                    op_sibling_splice(firstkid, NULL, 1, padop);
+                    op_sibling_splice(firstkid, NULL, 1,
+                        newPADxVOP(OP_PADCV, 0, off));
                     op_free(kid);
                 }
             }
@@ -13536,13 +13587,40 @@ subroutine.
 CV *
 Perl_find_lexical_cv(pTHX_ PADOFFSET off)
 {
-    PADNAME *name = PAD_COMPNAME(off);
+    const PADNAME *name = PAD_COMPNAME(off);
     CV *compcv = PL_compcv;
     while (PadnameOUTER(name)) {
-        assert(PARENT_PAD_INDEX(name));
         compcv = CvOUTSIDE(compcv);
-        name = PadlistNAMESARRAY(CvPADLIST(compcv))
+        if (LIKELY(PARENT_PAD_INDEX(name))) {
+            name = PadlistNAMESARRAY(CvPADLIST(compcv))
                 [off = PARENT_PAD_INDEX(name)];
+        }
+        else {
+            /* In an eval() in an inner scope like a function, the
+               intermediate pad in the sub might not be populated with the
+               sub.  So search harder.
+
+               It is possible we won't find the name in this
+               particular scope, but that's fine, if we don't we'll
+               find it in some outer scope.  Finding it here will let us
+               go back to following the PARENT_PAD_INDEX() chain.
+            */
+            const PADNAMELIST * const names = PadlistNAMES(CvPADLIST(compcv));
+            PADNAME * const * const name_p = PadnamelistARRAY(names);
+            int offset;
+            for (offset = PadnamelistMAXNAMED(names); offset > 0; offset--) {
+                const PADNAME * const thisname = name_p[offset];
+                /* The pv is copied from the outer PADNAME to the
+                   inner PADNAMEs so we don't need to compare the
+                   string contents
+                */
+                if (thisname && PadnameLEN(thisname) == PadnameLEN(name)
+                    && PadnamePV(thisname) == PadnamePV(name)) {
+                    name = thisname;
+                    break;
+                }
+            }
+        }
     }
     assert(!PadnameIsOUR(name));
     if (!PadnameIsSTATE(name) && PadnamePROTOCV(name)) {
@@ -15189,20 +15267,155 @@ const_av_xsub(pTHX_ CV* cv)
  * This is the e implementation for the DUP_WARNINGS() macro
  */
 
-STRLEN*
-Perl_dup_warnings(pTHX_ STRLEN* warnings)
+char *
+Perl_dup_warnings(pTHX_ char* warnings)
 {
-    Size_t size;
-    STRLEN *new_warnings;
-
     if (warnings == NULL || specialWARN(warnings))
         return warnings;
 
-    size = sizeof(*warnings) + *warnings;
+    return rcpv_copy(warnings);
+}
 
-    new_warnings = (STRLEN*)PerlMemShared_malloc(size);
-    Copy(warnings, new_warnings, size, char);
-    return new_warnings;
+/*
+=for apidoc rcpv_new
+
+Create a new shared memory refcounted string with the requested size, and
+with the requested initialization and a refcount of 1. The actual space
+allocated will be 1 byte more than requested and rcpv_new() will ensure that
+the extra byte is a null regardless of any flags settings.
+
+If the RCPVf_NO_COPY flag is set then the pv argument will be
+ignored, otherwise the contents of the pv pointer will be copied into
+the new buffer or if it is NULL the function will do nothing and return NULL.
+
+If the RCPVf_USE_STRLEN flag is set then the len argument is ignored and
+recomputed using C<strlen(pv)>. It is an error to combine RCPVf_USE_STRLEN
+and RCPVf_NO_COPY at the same time.
+
+Under DEBUGGING rcpv_new() will assert() if it is asked to create a 0 length
+shared string unless the RCPVf_ALLOW_EMPTY flag is set.
+
+The return value from the function is suitable for passing into rcpv_copy() and
+rcpv_free(). To access the RCPV * from the returned value use the RCPVx() macro.
+The 'len' member of the RCPV struct stores the allocated length (including the
+extra byte), but the RCPV_LEN() macro returns the requested length (not
+including the extra byte).
+
+Note that rcpv_new() does NOT use a hash table or anything like that to
+dedupe inputs given the same text content. Each call with a non-null pv
+parameter will produce a distinct pointer with its own refcount regardless of
+the input content.
+
+=cut
+*/
+
+char *
+Perl_rcpv_new(pTHX_ const char *pv, STRLEN len, U32 flags) {
+    RCPV *rcpv;
+
+    PERL_ARGS_ASSERT_RCPV_NEW;
+
+    PERL_UNUSED_CONTEXT;
+
+    /* Musn't use both at the same time */
+    assert((flags & (RCPVf_NO_COPY|RCPVf_USE_STRLEN))!=
+                    (RCPVf_NO_COPY|RCPVf_USE_STRLEN));
+
+    if (!pv && (flags & RCPVf_NO_COPY) == 0)
+        return NULL;
+
+    if (flags & RCPVf_USE_STRLEN)
+        len = strlen(pv);
+
+    assert(len || (flags & RCPVf_ALLOW_EMPTY));
+
+    len++; /* add one for the null we will add to the end */
+
+    rcpv = (RCPV *)PerlMemShared_malloc(sizeof(struct rcpv) + len);
+    if (!rcpv)
+        croak_no_mem();
+
+    rcpv->len = len;    /* store length including null,
+                           RCPV_LEN() subtracts 1 to account for this */
+    rcpv->refcount = 1;
+
+    if ((flags & RCPVf_NO_COPY) == 0) {
+        (void)memcpy(rcpv->pv, pv, len-1);
+    }
+    rcpv->pv[len-1]= '\0'; /* the last byte should always be null */
+    return rcpv->pv;
+}
+
+/*
+=for apidoc rcpv_free
+
+refcount decrement a shared memory refcounted string, and when
+the refcount goes to 0 free it using perlmemshared_free().
+
+it is the callers responsibility to ensure that the pv is the
+result of a rcpv_new() call.
+
+Always returns NULL so it can be used like this:
+
+    thing = rcpv_free(thing);
+
+=cut
+*/
+
+char *
+Perl_rcpv_free(pTHX_ char *pv) {
+
+    PERL_ARGS_ASSERT_RCPV_FREE;
+
+    PERL_UNUSED_CONTEXT;
+
+    if (!pv)
+        return NULL;
+    RCPV *rcpv = RCPVx(pv);
+
+    assert(rcpv->refcount);
+    assert(rcpv->len);
+
+    OP_REFCNT_LOCK;
+    if (--rcpv->refcount == 0) {
+        rcpv->len = 0;
+        PerlMemShared_free(rcpv);
+    }
+    OP_REFCNT_UNLOCK;
+    return NULL;
+}
+
+/*
+=for apidoc rcpv_copy
+
+refcount increment a shared memory refcounted string, and when
+the refcount goes to 0 free it using PerlMemShared_free().
+
+It is the callers responsibility to ensure that the pv is the
+result of a rcpv_new() call.
+
+Returns the same pointer that was passed in.
+
+    new = rcpv_copy(pv);
+
+=cut
+*/
+
+
+char *
+Perl_rcpv_copy(pTHX_ char *pv) {
+
+    PERL_ARGS_ASSERT_RCPV_COPY;
+
+    PERL_UNUSED_CONTEXT;
+
+    if (!pv)
+        return NULL;
+    RCPV *rcpv = RCPVx(pv);
+    OP_REFCNT_LOCK;
+    rcpv->refcount++;
+    OP_REFCNT_UNLOCK;
+    return pv;
 }
 
 /*

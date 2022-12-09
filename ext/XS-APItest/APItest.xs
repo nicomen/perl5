@@ -4310,7 +4310,7 @@ CODE:
 SV *
 HvENAME(HV *hv)
 CODE:
-    RETVAL = hv && HvENAME(hv)
+    RETVAL = hv && HvHasENAME(hv)
               ? newSVpvn_flags(
                   HvENAME(hv),HvENAMELEN(hv),
                   (HvENAMEUTF8(hv) ? SVf_UTF8 : 0)
@@ -4340,30 +4340,44 @@ OUTPUT:
     RETVAL
 
 char *
-SvPVbyte(SV *sv)
+SvPVbyte(SV *sv, OUT STRLEN len)
+CODE:
+    RETVAL = SvPVbyte(sv, len);
+OUTPUT:
+    RETVAL
+
+char *
+SvPVbyte_nolen(SV *sv)
 CODE:
     RETVAL = SvPVbyte_nolen(sv);
 OUTPUT:
     RETVAL
 
 char *
-SvPVbyte_nomg(SV *sv)
+SvPVbyte_nomg(SV *sv, OUT STRLEN len)
 CODE:
-    RETVAL = SvPVbyte_nomg(sv, PL_na);
+    RETVAL = SvPVbyte_nomg(sv, len);
 OUTPUT:
     RETVAL
 
 char *
-SvPVutf8(SV *sv)
+SvPVutf8(SV *sv, OUT STRLEN len)
+CODE:
+    RETVAL = SvPVutf8(sv, len);
+OUTPUT:
+    RETVAL
+
+char *
+SvPVutf8_nolen(SV *sv)
 CODE:
     RETVAL = SvPVutf8_nolen(sv);
 OUTPUT:
     RETVAL
 
 char *
-SvPVutf8_nomg(SV *sv)
+SvPVutf8_nomg(SV *sv, OUT STRLEN len)
 CODE:
-    RETVAL = SvPVutf8_nomg(sv, PL_na);
+    RETVAL = SvPVutf8_nomg(sv, len);
 OUTPUT:
     RETVAL
 
@@ -4710,16 +4724,22 @@ void
 sv_magic_foo(SV *sv, SV *thingy)
 ALIAS:
     sv_magic_bar = 1
+    sv_magic_baz = 2
 CODE:
-    sv_magicext(SvRV(sv), NULL, PERL_MAGIC_ext, ix ? &vtbl_bar : &vtbl_foo, (const char *)thingy, 0);
+    sv_magicext(sv, NULL, ix == 2 ? PERL_MAGIC_extvalue : PERL_MAGIC_ext, ix ? &vtbl_bar : &vtbl_foo, (const char *)thingy, 0);
 
 SV *
 mg_find_foo(SV *sv)
 ALIAS:
     mg_find_bar = 1
+    mg_find_baz = 2
 CODE:
-    MAGIC *mg = mg_findext(SvRV(sv), PERL_MAGIC_ext, ix ? &vtbl_bar : &vtbl_foo);
-    RETVAL = mg ? SvREFCNT_inc((SV *)mg->mg_ptr) : &PL_sv_undef;
+	RETVAL = &PL_sv_undef;
+	if (SvTYPE(sv) >= SVt_PVMG) {
+		MAGIC *mg = mg_findext(sv, ix == 2 ? PERL_MAGIC_extvalue : PERL_MAGIC_ext, ix ? &vtbl_bar : &vtbl_foo);
+		if (mg)
+			RETVAL = SvREFCNT_inc((SV *)mg->mg_ptr);
+	}
 OUTPUT:
     RETVAL
 
@@ -4727,13 +4747,14 @@ void
 sv_unmagic_foo(SV *sv)
 ALIAS:
     sv_unmagic_bar = 1
+    sv_unmagic_baz = 2
 CODE:
-    sv_unmagicext(SvRV(sv), PERL_MAGIC_ext, ix ? &vtbl_bar : &vtbl_foo);
+    sv_unmagicext(sv, ix == 2 ? PERL_MAGIC_extvalue : PERL_MAGIC_ext, ix ? &vtbl_bar : &vtbl_foo);
 
 void
 sv_magic(SV *sv, SV *thingy)
 CODE:
-    sv_magic(SvRV(sv), NULL, PERL_MAGIC_ext, (const char *)thingy, 0);
+    sv_magic(sv, NULL, PERL_MAGIC_ext, (const char *)thingy, 0);
 
 UV
 test_get_vtbl()

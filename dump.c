@@ -804,8 +804,7 @@ Perl_dump_sub_perl(pTHX_ const GV *gv, bool justperl)
 
     PERL_ARGS_ASSERT_DUMP_SUB_PERL;
 
-    cv = isGV_with_GP(gv) ? GvCV(gv) :
-            (assert(SvROK((SV*)gv)), (CV*)SvRV((SV*)gv));
+    cv = isGV_with_GP(gv) ? GvCV(gv) : CV_FROM_REF((SV*)gv);
     if (justperl && (CvISXSUB(cv) || !CvROOT(cv)))
         return;
 
@@ -877,10 +876,8 @@ S_gv_display(pTHX_ GV *gv)
         if (isGV_with_GP(gv))
             gv_fullname3(raw, gv, NULL);
         else {
-            assert(SvROK(gv));
-            assert(SvTYPE(SvRV(gv)) == SVt_PVCV);
             Perl_sv_catpvf(aTHX_ raw, "cv ref: %s",
-                    SvPV_nolen_const(cv_name((CV *)SvRV(gv), name, 0)));
+                    SvPV_nolen_const(cv_name(CV_FROM_REF((SV*)gv), name, 0)));
         }
         rawpv = SvPV_const(raw, len);
         generic_pv_escape(name, rawpv, len, SvUTF8(raw));
@@ -1341,6 +1338,11 @@ S_do_op_dump_bar(pTHX_ I32 level, UV bar, PerlIO *file, const OP *o)
                                 generic_pv_escape( tmpsv, label, label_len,
                                            (label_flags & SVf_UTF8)));
         }
+        /* add hints and features if set */
+        if (cCOPo->cop_hints)
+            S_opdump_indent(aTHX_ o, level, bar, file, "HINTS = %08x\n",cCOPo->cop_hints);
+        if (cCOPo->cop_features)
+            S_opdump_indent(aTHX_ o, level, bar, file, "FEATS = %08x\n",cCOPo->cop_features);
 
         S_opdump_indent(aTHX_ o, level, bar, file, "SEQ = %u\n",
                          (unsigned int)cCOPo->cop_seq);
@@ -1700,7 +1702,7 @@ Perl_do_gv_dump(pTHX_ I32 level, PerlIO *file, const char *name, GV *sv)
     PERL_ARGS_ASSERT_DO_GV_DUMP;
 
     Perl_dump_indent(aTHX_ level, file, "%s = 0x%" UVxf, name, PTR2UV(sv));
-    if (sv && GvNAME(sv)) {
+    if (sv) {
         SV * const tmpsv = newSVpvs("");
         PerlIO_printf(file, "\t\"%s\"\n",
                               generic_pv_escape( tmpsv, GvNAME(sv), GvNAMELEN(sv), GvNAMEUTF8(sv) ));
@@ -1715,7 +1717,7 @@ Perl_do_gvgv_dump(pTHX_ I32 level, PerlIO *file, const char *name, GV *sv)
     PERL_ARGS_ASSERT_DO_GVGV_DUMP;
 
     Perl_dump_indent(aTHX_ level, file, "%s = 0x%" UVxf, name, PTR2UV(sv));
-    if (sv && GvNAME(sv)) {
+    if (sv) {
        SV *tmp = newSVpvs_flags("", SVs_TEMP);
         const char *hvname;
         HV * const stash = GvSTASH(sv);
@@ -2661,7 +2663,38 @@ Perl_do_sv_dump(pTHX_ I32 level, PerlIO *file, SV *sv, I32 nest, I32 maxnest, bo
 
 Dumps the contents of an SV to the C<STDERR> filehandle.
 
-For an example of its output, see L<Devel::Peek>.
+For an example of its output, see L<Devel::Peek>. If
+the item is an SvROK it will dump items to a depth of 4,
+otherwise it will dump only the top level item, which
+means that it will not dump the contents of an AV * or
+HV *. For that use C<av_dump()> or C<hv_dump()>.
+
+=for apidoc sv_dump_depth
+
+Dumps the contents of an SV to the C<STDERR> filehandle
+to the depth requested. This function can be used on any
+SV derived type (GV, HV, AV) with an appropriate cast.
+This is a more flexible variant of sv_dump(). For example
+
+    HV *hv = ...;
+    sv_dump_depth((SV*)hv, 2);
+
+would dump the hv, its keys and values, but would not recurse
+into any RV values.
+
+=for apidoc av_dump
+
+Dumps the contents of an AV to the C<STDERR> filehandle,
+Similar to using Devel::Peek on an arrayref but does not
+expect an RV wrapper. Dumps contents to a depth of 3 levels
+deep.
+
+=for apidoc hv_dump
+
+Dumps the contents of an HV to the C<STDERR> filehandle.
+Similar to using Devel::Peek on an hashref but does not
+expect an RV wrapper. Dumps contents to a depth of 3 levels
+deep.
 
 =cut
 */
@@ -2670,9 +2703,27 @@ void
 Perl_sv_dump(pTHX_ SV *sv)
 {
     if (sv && SvROK(sv))
-        do_sv_dump(0, Perl_debug_log, sv, 0, 4, 0, 0);
+        sv_dump_depth(sv, 4);
     else
-        do_sv_dump(0, Perl_debug_log, sv, 0, 0, 0, 0);
+        sv_dump_depth(sv, 0);
+}
+
+void
+Perl_sv_dump_depth(pTHX_ SV *sv, I32 depth)
+{
+    do_sv_dump(0, Perl_debug_log, sv, 0, depth, 0, 0);
+}
+
+void
+Perl_av_dump(pTHX_ AV *av)
+{
+    sv_dump_depth((SV*)av, 3);
+}
+
+void
+Perl_hv_dump(pTHX_ HV *hv)
+{
+    sv_dump_depth((SV*)hv, 3);
 }
 
 int

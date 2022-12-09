@@ -1064,6 +1064,10 @@ violations are fatal.
 
 #include "perl_langinfo.h"    /* Needed for _NL_LOCALE_NAME */
 
+/* =========================================================================
+ * The defines from here to the following ===== line are unfortunately
+ * duplicated in makedef.pl, and changes here MUST also be made there */
+
 /* If not forbidden, we enable locale handling if either 1) the POSIX 2008
  * functions are available, or 2) just the setlocale() function.  This logic is
  * repeated in t/loc_tools.pl and makedef.pl;  The three should be kept in
@@ -1124,6 +1128,9 @@ violations are fatal.
 #   endif
 #   if !defined(NO_LOCALE_TELEPHONE) && defined(LC_TELEPHONE)
 #	define USE_LOCALE_TELEPHONE
+#   endif
+#   if !defined(NO_LOCALE_NAME) && defined(LC_NAME)
+#	define USE_LOCALE_NAME
 #   endif
 #   if !defined(NO_LOCALE_SYNTAX) && defined(LC_SYNTAX)
 #	define USE_LOCALE_SYNTAX
@@ -1199,11 +1206,17 @@ violations are fatal.
 #  else
 #    define PERL_DUMMY_TELEPHONE_       PERL_DUMMY_PAPER_
 #  endif
+#  ifdef USE_LOCALE_NAME
+#    define LC_NAME_INDEX_              PERL_DUMMY_TELEPHONE_ + 1
+#    define PERL_DUMMY_NAME_            LC_NAME_INDEX_
+#  else
+#    define PERL_DUMMY_NAME_            PERL_DUMMY_TELEPHONE_
+#  endif
 #  ifdef USE_LOCALE_SYNTAX
-#    define LC_SYNTAX_INDEX_            PERL_DUMMY_TELEPHONE_ + 1
+#    define LC_SYNTAX_INDEX_            PERL_DUMMY_NAME + 1
 #    define PERL_DUMMY_SYNTAX_          LC_SYNTAX_INDEX_
 #  else
-#    define PERL_DUMMY_SYNTAX_          PERL_DUMMY_TELEPHONE_
+#    define PERL_DUMMY_SYNTAX_          PERL_DUMMY_NAME_
 #  endif
 #  ifdef USE_LOCALE_TOD
 #    define LC_TOD_INDEX_               PERL_DUMMY_SYNTAX_ + 1
@@ -1215,35 +1228,32 @@ violations are fatal.
 #    define LC_ALL_INDEX_               PERL_DUMMY_TOD_ + 1
 #  endif
 
-/* XXX The next few defines are unfortunately duplicated in makedef.pl, and
- * changes here MUST also be made there */
 
 #  if defined(USE_ITHREADS) && ! defined(NO_LOCALE_THREADS)
 #    define USE_LOCALE_THREADS
 #  endif
-#  if ! defined(HAS_SETLOCALE) && defined(HAS_POSIX_2008_LOCALE)
-#      define USE_POSIX_2008_LOCALE
-#      ifndef USE_THREAD_SAFE_LOCALE
-#        define USE_THREAD_SAFE_LOCALE
-#      endif
-                                   /* If compiled with
-                                    * -DUSE_THREAD_SAFE_LOCALE, will do so even
-                                    * on unthreaded builds */
-#  elif   (defined(USE_LOCALE_THREADS) || defined(USE_THREAD_SAFE_LOCALE))   \
-       && (    defined(HAS_POSIX_2008_LOCALE)                                \
-           || (defined(WIN32) && defined(_MSC_VER)))                         \
-       && ! defined(NO_THREAD_SAFE_LOCALE)
-#    ifndef USE_THREAD_SAFE_LOCALE
+
+   /* Use POSIX 2008 locales if available, and no alternative exists
+    * ('setlocale()' is the alternative); or is threaded and not forbidden to
+    * use them */
+#  if defined(HAS_POSIX_2008_LOCALE) && (  ! defined(HAS_SETLOCALE)            \
+                                         || (     defined(USE_LOCALE_THREADS)  \
+                                             && ! defined(NO_POSIX_2008_LOCALE)))
+#    define USE_POSIX_2008_LOCALE
+#  endif
+
+   /* On threaded builds, use thread-safe locales if they are available and not
+    * forbidden.  Availability is when we are using POSIX 2008 locales, or
+    * Windows for quite a few releases now. */
+#  if defined(USE_LOCALE_THREADS) && ! defined(NO_THREAD_SAFE_LOCALE)
+#    if defined(USE_POSIX_2008_LOCALE) || (defined(WIN32) && defined(_MSC_VER))
 #      define USE_THREAD_SAFE_LOCALE
-#    endif
-#    ifdef HAS_POSIX_2008_LOCALE
-#      define USE_POSIX_2008_LOCALE
 #    endif
 #  endif
 
 #  include "perl_langinfo.h"    /* Needed for _NL_LOCALE_NAME */
 
-/* Allow use of glib's undocumented querylocale() equivalent if asked for, and
+/* Allow use of glibc's undocumented querylocale() equivalent if asked for, and
  * appropriate */
 #  ifdef USE_POSIX_2008_LOCALE
 #    if  defined(HAS_QUERYLOCALE)                                           \
@@ -1262,20 +1272,42 @@ violations are fatal.
 #    endif
 #  endif
 
+   /* POSIX 2008 has no means of finding out the current locale without a
+    * querylocale; so must keep track of it ourselves */
 #  if (defined(USE_POSIX_2008_LOCALE) && ! defined(USE_QUERYLOCALE))
 #    define USE_PL_CURLOCALES
+#    define USE_PL_CUR_LC_ALL
 #  endif
 
-/*  Microsoft documentation reads in the change log for VS 2015:
- *     "The localeconv function declared in locale.h now works correctly when
- *     per-thread locale is enabled. In previous versions of the library, this
- *     function would return the lconv data for the global locale, not the
- *     thread's locale."
- */
-#  if defined(WIN32) && defined(USE_THREAD_SAFE_LOCALE) && _MSC_VER < 1900
-#  define TS_W32_BROKEN_LOCALECONV
+#  if defined(WIN32) && defined(USE_THREAD_SAFE_LOCALE)
+
+   /* We need to be able to map the current value of what the tTHX context
+    * thinks LC_ALL is so as to inform the Windows libc when switching
+    * contexts. */
+#    define USE_PL_CUR_LC_ALL
+
+   /* Microsoft documentation reads in the change log for VS 2015: "The
+    * localeconv function declared in locale.h now works correctly when
+    * per-thread locale is enabled. In previous versions of the library, this
+    * function would return the lconv data for the global locale, not the
+    * thread's locale." */
+#    if _MSC_VER < 1900
+#      define TS_W32_BROKEN_LOCALECONV
+#    endif
+#  endif
+
+   /* POSIX 2008 and Windows with thread-safe locales keep locale information
+    * in libc data.  Therefore we must inform their libc's when the context
+    * switches */
+#  if defined(MULTIPLICITY) && (   defined(USE_POSIX_2008_LOCALE)           \
+                                || (   defined(WIN32)                       \
+                                    && defined(USE_THREAD_SAFE_LOCALE)))
+#    define USE_PERL_SWITCH_LOCALE_CONTEXT
 #  endif
 #endif
+
+/* end of makedef.pl logic duplication
+ * ========================================================================= */
 
 #ifdef PERL_CORE
 
@@ -1297,6 +1329,12 @@ typedef enum {  /* Is the locale UTF8? */
     LOCALE_IS_UTF8,
     LOCALE_UTF8NESS_UNKNOWN
 } locale_utf8ness_t;
+
+typedef struct {
+    const char *name;
+    size_t offset;
+} lconv_offset_t;
+
 
 #endif
 
@@ -1569,6 +1607,32 @@ Use L</UV> to declare variables of the maximum usable size on this platform.
 #endif
 
 #define MEM_SIZE Size_t
+
+/* av_extend and analogues enforce a minimum number of array elements.
+ * This has been 4 elements (so a minimum key size of 3) for a long
+ * time, but the rationale behind this seems to have been lost to the
+ * mists of time. */
+#ifndef PERL_ARRAY_NEW_MIN_KEY
+#define PERL_ARRAY_NEW_MIN_KEY 3
+#endif
+
+/* Functions like Perl_sv_grow mandate a minimum string size.
+ * This was 10 bytes for a long time, the rationale for which seems lost
+ * to the mists of time. However, this does not correlate to what modern
+ * malloc implementations will actually return, in particular the fact
+ * that chunks are almost certainly some multiple of pointer size. The
+ * default has therefore been revised to a more useful approximation.
+ * Notes: The following is specifically conservative for 64 bit, since
+ * most dlmalloc derivatives seem to serve a 3xPTRSIZE minimum chunk,
+ * so the below perhaps should be:
+ *     ((PTRSIZE == 4) ? 12 : 24)
+ * Configure probes for malloc_good_size, malloc_actual_size etc.
+ * could be revised to record the actual minimum chunk size, to which
+ * PERL_STRLEN_NEW_MIN could then be set.
+ */
+#ifndef PERL_STRLEN_NEW_MIN
+#define PERL_STRLEN_NEW_MIN ((PTRSIZE == 4) ? 12 : 16)
+#endif
 
 /* Round all values passed to malloc up, by default to a multiple of
    sizeof(size_t)
@@ -2365,57 +2429,6 @@ typedef UVTYPE UV;
 
 #ifndef NO_PERL_PRESERVE_IVUV
 #define PERL_PRESERVE_IVUV	/* We like our integers to stay integers. */
-#endif
-
-/*
-=for apidoc   AmnU||U32of
-=for apidoc_item  ||U32uf
-=for apidoc_item  ||U32xf
-=for apidoc_item  ||U32Xf
-
-These symbols define the format strings used for printing variables declared
-as U32; respectively as octal, unsigned, hex (lowercase C<a-f>), and hex
-(uppercase C<a-f>).
-
-=cut
-*/
-
-#if U32SIZE == UVSIZE
-#  define U32uf UVuf
-#  define U32of UVof
-#  define U32xf UVxf
-#  define U32Xf UVXf
-#elif U32SIZE == INTSIZE
-#  define U32uf "u"
-#  define U32of "o"
-#  define U32xf "x"
-#  define U32Xf "X"
-#elif U32SIZE == LONGSIZE
-#  define U32uf "lu"
-#  define U32of "lo"
-#  define U32xf "lx"
-#  define U32Xf "lX"
-#else
-#  error Cant figure out formatting strings for U32SIZE
-#endif
-
-/*
-=for apidoc  AmnU||I32df
-
-This symbol defines the format string used for printing a variable declared as
-I32
-
-=cut
-*/
-
-#if I32SIZE == IVSIZE
-#  define I32df IVdf
-#elif I32SIZE == INTSIZE
-#  define I32df "d"
-#elif I32SIZE == LONGSIZE
-#  define I32df "ld"
-#else
-#  error Cant figure out formatting string for I32SIZE
 #endif
 
 /*
@@ -4037,7 +4050,10 @@ out there, Solaris being the most prominent.
 
 /* the traditional thread-unsafe notion of "current interpreter". */
 #ifndef PERL_SET_INTERP
-#  define PERL_SET_INTERP(i)		(PL_curinterp = (PerlInterpreter*)(i))
+#  define PERL_SET_INTERP(i)                                            \
+            STMT_START { PL_curinterp = (PerlInterpreter*)(i);          \
+                         PERL_SET_NON_tTHX_CONTEXT(i);                  \
+            } STMT_END
 #endif
 
 #ifndef PERL_GET_INTERP
@@ -4330,7 +4346,7 @@ void init_os_extras(void);
 UNION_ANY_DEFINITION;
 #else
 union any {
-    void*	any_ptr;
+    void*       any_ptr;
     SV*         any_sv;
     SV**        any_svp;
     GV*         any_gv;
@@ -4339,14 +4355,17 @@ union any {
     OP*         any_op;
     char*       any_pv;
     char**      any_pvp;
-    I32		any_i32;
-    U32		any_u32;
-    IV		any_iv;
-    UV		any_uv;
-    long	any_long;
-    bool	any_bool;
-    void	(*any_dptr) (void*);
-    void	(*any_dxptr) (pTHX_ void*);
+    I32         any_i32;
+    U32         any_u32;
+    IV          any_iv;
+    UV          any_uv;
+    long        any_long;
+    bool        any_bool;
+    Size_t      any_size;
+    SSize_t     any_ssize;
+    STRLEN      any_strlen;
+    void        (*any_dptr) (void*);
+    void        (*any_dxptr) (pTHX_ void*);
 };
 #endif
 
@@ -4487,8 +4506,7 @@ typedef        struct crypt_data {     /* straight from /usr/include/crypt.h */
 
 typedef struct magic_state MGS;	/* struct magic_state defined in mg.c */
 
-#if defined(PERL_IN_REGCOMP_C) || defined(PERL_IN_REGEXEC_C) \
- || defined(PERL_EXT_RE_BUILD)
+#if defined(PERL_IN_REGEX_ENGINE) || defined(PERL_EXT_RE_BUILD)
 
 /* These have to be predeclared, as they are used in proto.h which is #included
  * before their definitions in regcomp.h. */
@@ -4504,6 +4522,7 @@ typedef struct regnode_charclass_posixl regnode_charclass_posixl;
 typedef struct regnode_ssc regnode_ssc;
 typedef struct RExC_state_t RExC_state_t;
 struct _reg_trie_data;
+typedef struct scan_data_t scan_data_t;
 
 #endif
 
@@ -5376,9 +5395,9 @@ Indices outside the range 0..31 result in (bad) undedefined behavior.
 EXTCONST char PL_hexdigit[]
   INIT("0123456789abcdef0123456789ABCDEF");
 
-EXTCONST STRLEN PL_WARN_ALL
+EXT char PL_WARN_ALL
   INIT(0);
-EXTCONST STRLEN PL_WARN_NONE
+EXT char PL_WARN_NONE
   INIT(0);
 
 /* This is constant on most architectures, a global on OS/2 */
@@ -5984,10 +6003,27 @@ typedef void (*XSINIT_t) (pTHX);
 typedef void (*ATEXIT_t) (pTHX_ void*);
 typedef void (*XSUBADDR_t) (pTHX_ CV *);
 
+/* TODO: find somewhere to store this */
+enum Perl_custom_infix_precedence {
+    INFIX_PREC_LOW  =  10, /* non-associative */
+    INFIX_PREC_REL  =  30, /* non-associative, just below `==` */
+    INFIX_PREC_ADD  =  50, /* left-associative, same precedence as `+` */
+    INFIX_PREC_MUL  =  70, /* left-associative, same precedence as `*` */
+    INFIX_PREC_POW  =  90, /* right-associative, same precedence as `**` */
+    INFIX_PREC_HIGH = 110, /* non-associative */
+};
+struct Perl_custom_infix;
+struct Perl_custom_infix {
+    enum Perl_custom_infix_precedence prec;
+    void (*parse)(pTHX_ SV **opdata, struct Perl_custom_infix *);  /* optional */
+    OP *(*build_op)(pTHX_ SV **opdata, OP *lhs, OP *rhs, struct Perl_custom_infix *);
+};
+
 typedef OP* (*Perl_ppaddr_t)(pTHX);
 typedef OP* (*Perl_check_t) (pTHX_ OP*);
 typedef void(*Perl_ophook_t)(pTHX_ OP*);
 typedef int (*Perl_keyword_plugin_t)(pTHX_ char*, STRLEN, OP**);
+typedef STRLEN (*Perl_infix_plugin_t)(pTHX_ char*, STRLEN, struct Perl_custom_infix **);
 typedef void(*Perl_cpeep_t)(pTHX_ OP *, OP *);
 
 typedef void(*globhook_t)(pTHX);
@@ -6263,6 +6299,24 @@ EXTCONST U8   PL_deBruijn_bitpos_tab64[];
 #ifndef PERL_SET_CONTEXT
 #  define PERL_SET_CONTEXT(i)		PERL_SET_INTERP(i)
 #endif
+
+#ifdef USE_PERL_SWITCH_LOCALE_CONTEXT
+#  define PERL_SET_LOCALE_CONTEXT(i)                                        \
+      STMT_START {                                                          \
+          if (UNLIKELY(PL_veto_switch_non_tTHX_context))                    \
+                Perl_switch_locale_context();                               \
+      } STMT_END
+#else
+#  define PERL_SET_LOCALE_CONTEXT(i)  NOOP
+#endif
+
+/* In some Configurations there may be per-thread information that is carried
+ * in a library instead of perl's tTHX structure.  This macro is to be used to
+ * handle those when tTHX is changed.  Only locale handling is currently known
+ * to be affected. */
+#define PERL_SET_NON_tTHX_CONTEXT(i)                                        \
+                        STMT_START { PERL_SET_LOCALE_CONTEXT(i); } STMT_END
+
 
 #ifndef PERL_GET_CONTEXT
 #  define PERL_GET_CONTEXT		PERL_GET_INTERP
@@ -7030,7 +7084,7 @@ the plain locale pragma without a parameter (S<C<use locale>>) is in effect.
             }                                                               \
         } STMT_END
 
-#  ifndef USE_THREAD_SAFE_LOCALE
+#  if defined(USE_THREADS) && ! defined(USE_THREAD_SAFE_LOCALE)
 
      /* By definition, a thread-unsafe locale means we need a critical
       * section. */
@@ -7105,6 +7159,10 @@ the plain locale pragma without a parameter (S<C<use locale>>) is in effect.
 #  define POSIX_SETLOCALE_LOCK      gwLOCALE_LOCK
 #  define POSIX_SETLOCALE_UNLOCK    gwLOCALE_UNLOCK
 #endif
+
+/* It handles _wsetlocale() as well */
+#define WSETLOCALE_LOCK      POSIX_SETLOCALE_LOCK
+#define WSETLOCALE_UNLOCK    POSIX_SETLOCALE_UNLOCK
 
 /* Similar to gwLOCALE_LOCK, there are functions that require both the locale
  * and environment to be constant during their execution, and don't change
@@ -7874,7 +7932,9 @@ C<strtoul>.
  *    "DynaLoader::_guts" XS_VERSION
  *    XXX in the current implementation, this string is ignored.
  * 2. Declare a typedef named my_cxt_t that is a structure that contains
- *    all the data that needs to be interpreter-local.
+ *    all the data that needs to be interpreter-local that perl controls.  This
+ *    doesn't include things that libc controls, such as the uselocale object
+ *    in Configurations that use it.
  * 3. Use the START_MY_CXT macro after the declaration of my_cxt_t.
  * 4. Use the MY_CXT_INIT macro such that it is called exactly once
  *    (typically put in the BOOT: section).

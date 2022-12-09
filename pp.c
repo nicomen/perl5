@@ -943,7 +943,7 @@ PP(pp_undef)
             /* undef *Pkg::meth_name ... */
             bool method_changed
              =   GvCVu((const GV *)sv) && (stash = GvSTASH((const GV *)sv))
-              && HvENAME_get(stash);
+              && HvHasENAME(stash);
             /* undef *Foo:: */
             if((stash = GvHV((const GV *)sv))) {
                 if(HvENAME_get(stash))
@@ -968,7 +968,7 @@ PP(pp_undef)
             /* undef *Foo::ISA */
             if( strEQ(GvNAME((const GV *)sv), "ISA")
              && (stash = GvSTASH((const GV *)sv))
-             && (method_changed || HvENAME(stash)) )
+             && (method_changed || HvHasENAME(stash)) )
                 mro_isa_changed_in(stash);
             else if(method_changed)
                 mro_method_changed_in(
@@ -5572,6 +5572,51 @@ PP(pp_anonlist)
     RETURN;
 }
 
+/* When an anonlist or anonhash will (1) be empty and (2) return an RV
+ * pointing to the new AV/HV, the peephole optimizer can swap in this
+ * simpler function and op_null the originally associated PUSHMARK. */
+PP(pp_emptyavhv)
+{
+    dSP;
+    OP * const op = PL_op;
+    SV * rv;
+    SV * const sv = MUTABLE_SV( newSV_type(
+                                (op->op_private & OPpEMPTYAVHV_IS_HV) ?
+                                    SVt_PVHV :
+                                    SVt_PVAV ) );
+
+    /* Is it an assignment, just a stack push, or both?*/
+    if (op->op_private & OPpTARGET_MY) {
+        SV** const padentry = &PAD_SVl(op->op_targ);
+        rv = *padentry;
+        /* Since the op_targ is very likely to be an undef SVt_IV from
+         * a previous iteration, converting it to a live RV can
+         * typically be special-cased.*/
+        if (SvTYPE(rv) == SVt_IV && !SvOK(rv)) {
+            SvFLAGS(rv) = (SVt_IV | SVf_ROK);
+            SvRV_set(rv, sv);
+        } else {
+           sv_setrv_noinc_mg(rv, sv);
+        }
+        if ((op->op_private & (OPpLVAL_INTRO|OPpPAD_STATE)) == OPpLVAL_INTRO) {
+            save_clearsv(padentry);
+        }
+        if (GIMME_V == G_VOID) {
+            RETURN; /* skip extending and pushing */
+        }
+    } else {
+        /* Inlined newRV_noinc */
+        SV * refsv = newSV_type_mortal(SVt_IV);
+        SvRV_set(refsv, sv);
+        SvROK_on(refsv);
+
+        rv = refsv;
+    }
+
+    XPUSHs(rv);
+    RETURN;
+}
+
 PP(pp_anonhash)
 {
     dSP; dMARK; dORIGMARK;
@@ -7199,14 +7244,20 @@ PP(pp_argdefelem)
     assert(ix <= SSize_t_MAX);
 #endif
 
-    if (AvFILL(defav) >= ix) {
-        dSP;
-        SV **svp = av_fetch(defav, ix, FALSE);
-        SV  *val = svp ? *svp : &PL_sv_undef;
-        XPUSHs(val);
-        RETURN;
-    }
-    return cLOGOPo->op_other;
+    if (AvFILL(defav) < ix)
+        return cLOGOPo->op_other;
+
+    SV **svp = av_fetch(defav, ix, FALSE);
+    SV  *val = svp ? *svp : &PL_sv_undef;
+
+    if ((PL_op->op_private & OPpARG_IF_UNDEF) && !SvOK(val))
+        return cLOGOPo->op_other;
+    if ((PL_op->op_private & OPpARG_IF_FALSE) && !SvTRUE(val))
+        return cLOGOPo->op_other;
+
+    dSP;
+    XPUSHs(val);
+    RETURN;
 }
 
 

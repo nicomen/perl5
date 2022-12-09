@@ -161,6 +161,7 @@ Deprecated.  Use C<GIMME_V> instead.
                                 /*  On OP_DUMP, has no label */
                                 /*  On OP_UNSTACK, in a C-style for loop */
                                 /*  On OP_READLINE, it's for <<>>, not <> */
+                                /*  On OP_RETURN, module_true is in effect */
 /* There is no room in op_flags for this one, so it has its own bit-
    field member (op_folded) instead.  The flag is only used to tell
    op_convert_list to set op_folded.  */
@@ -618,6 +619,7 @@ typedef enum {
  * The same mutex is used to protect the refcounts of the reg_trie_data
  * and reg_ac_data structures, which are shared between duplicated
  * regexes.
+ * The same mutex is used to protect the refcounts for RCPV objects.
  */
 
 #ifdef USE_ITHREADS
@@ -1167,6 +1169,7 @@ struct op_argcheck_aux {
 };
 
 #define MI_INIT_WORKAROUND_PACK "Module::Install::DSL"
+
 
 /*
  * ex: set ts=8 sts=4 sw=4 et:

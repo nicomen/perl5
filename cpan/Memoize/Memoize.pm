@@ -10,28 +10,21 @@
 use strict; use warnings;
 
 package Memoize;
-our $VERSION = '1.10';
+our $VERSION = '1.15';
 
 use Carp;
-use Exporter;
-our $DEBUG;
-use Config;                     # Dammit.
-*import = \&Exporter::import;
+use Scalar::Util 1.11 (); # for set_prototype
+
+BEGIN { require Exporter; *import = \&Exporter::import }
 our @EXPORT = qw(memoize);
 our @EXPORT_OK = qw(unmemoize flush_cache);
 
 my %memotable;
-my @CONTEXT_TAGS = qw(MERGE TIE MEMORY FAULT HASH);
-my %IS_CACHE_TAG = map {($_ => 1)} @CONTEXT_TAGS;
 
 sub CLONE {
   my @info = values %memotable;
   %memotable = map +($_->{WRAPPER} => $_), @info;
 }
-
-# Raise an error if the user tries to specify one of thesepackage as a
-# tie for LIST_CACHE
-my %scalar_only = map {($_ => 1)} qw(DB_File GDBM_File SDBM_File ODBM_File NDBM_File);
 
 sub memoize {
   my $fn = shift;
@@ -45,19 +38,6 @@ sub memoize {
   my $uppack = caller;		# TCL me Elmo!
   my $name = (ref $fn ? undef : $fn);
   my $cref = _make_cref($fn, $uppack);
-  my $proto = prototype $cref;
-  $proto = defined $proto ? "($proto)" : '';
-
-  # I would like to get rid of the eval, but there seems not to be any
-  # other way to set the prototype properly.  The switch here for
-  # 'usethreads' works around a bug in threadperl having to do with
-  # magic goto.  It would be better to fix the bug and use the magic
-  # goto version everywhere.
-  my $info;
-  my $wrapper = 
-      $Config{usethreads} 
-        ? eval "sub $proto { &_memoizer(\$info, \@_); }"
-        : eval "sub $proto { unshift \@_, \$info; goto &_memoizer; }";
 
   my $normalizer = $options{NORMALIZER};
   if (defined $normalizer  && ! ref $normalizer) {
@@ -71,100 +51,70 @@ sub memoize {
   if (defined $install_name) {
     $install_name = $uppack . '::' . $install_name
 	unless $install_name =~ /::/;
-    no strict;
-    no warnings 'redefine';
-    *{$install_name} = $wrapper; # Install memoized version
+  }
+
+  # convert LIST_CACHE => MERGE to SCALAR_CACHE => MERGE
+  # to ensure TIE/HASH will always be checked by _check_suitable
+  if (($options{LIST_CACHE} || '') eq 'MERGE') {
+    $options{LIST_CACHE} = $options{SCALAR_CACHE};
+    $options{SCALAR_CACHE} = 'MERGE';
   }
 
   # These will be the caches
   my %caches;
-  for my $context (qw(SCALAR LIST)) {
-    # suppress subsequent 'uninitialized value' warnings
-    my $fullopt = $options{"${context}_CACHE"} ||= '';
+  for my $context (qw(LIST SCALAR)) { # SCALAR_CACHE must be last, to process MERGE
+    my $fullopt = $options{"${context}_CACHE"} ||= 'MEMORY';
     my ($cache_opt, @cache_opt_args) = ref $fullopt ? @$fullopt : $fullopt;
     if ($cache_opt eq 'FAULT') { # no cache
       $caches{$context} = undef;
     } elsif ($cache_opt eq 'HASH') { # user-supplied hash
       my $cache = $cache_opt_args[0];
-      my $package = ref(tied %$cache);
-      if ($context eq 'LIST' && $scalar_only{$package}) {
-        croak("You can't use $package for LIST_CACHE because it can only store scalars");
-      }
+      _check_suitable($context, ref tied %$cache);
       $caches{$context} = $cache;
-    } elsif ($cache_opt eq '' ||  $IS_CACHE_TAG{$cache_opt}) {
-      # default is that we make up an in-memory hash
+    } elsif ($cache_opt eq 'TIE') {
+      carp("TIE option to memoize() is deprecated; use HASH instead")
+        if warnings::enabled('all');
+      my $module = shift(@cache_opt_args) || '';
+      _check_suitable($context, $module);
+      my $hash = $caches{$context} = {};
+      (my $modulefile = $module . '.pm') =~ s{::}{/}g;
+      require $modulefile;
+      tie(%$hash, $module, @cache_opt_args)
+        or croak "Couldn't tie memoize hash to `$module': $!";
+    } elsif ($cache_opt eq 'MEMORY') {
       $caches{$context} = {};
-      # (this might get tied later, or MERGEd away)
+    } elsif ($cache_opt eq 'MERGE' and not ref $fullopt) { # ['MERGE'] was never supported
+      die "cannot MERGE $context\_CACHE" if $context ne 'SCALAR'; # should never happen
+      die 'bad cache setup order' if not exists $caches{LIST}; # should never happen
+      $options{MERGED} = 1;
+      $caches{SCALAR} = $caches{LIST};
     } else {
-      croak "Unrecognized option to `${context}_CACHE': `$cache_opt' should be one of (@CONTEXT_TAGS)";
+      croak "Unrecognized option to `${context}_CACHE': `$cache_opt' should be one of (MERGE TIE MEMORY FAULT HASH)";
     }
   }
 
-  # Perhaps I should check here that you didn't supply *both* merge
-  # options.  But if you did, it does do something reasonable: They
-  # both get merged to the same in-memory hash.
-  if ($options{SCALAR_CACHE} eq 'MERGE') {
-    $options{MERGED} = 1;
-    $caches{SCALAR} = $caches{LIST};
-  } elsif ($options{LIST_CACHE} eq 'MERGE') {
-    $options{MERGED} = 1;
-    $caches{LIST} = $caches{SCALAR};
-  }
+  my $wrapper = _wrap($install_name, $cref, $normalizer, $options{MERGED}, \%caches);
 
-  # Now deal with the TIE options
-  {
-    my $context;
-    foreach $context (qw(SCALAR LIST)) {
-      # If the relevant option wasn't `TIE', this call does nothing.
-      _my_tie($context, $caches{$context}, $options{"${context}_CACHE"}); # Croaks on failure
-    }
+  if (defined $install_name) {
+    no strict;
+    no warnings 'redefine';
+    *{$install_name} = $wrapper;
   }
-
-  $info =
-  {
-    N => $normalizer,
-    U => $cref,
-    NAME => $install_name,
-    S => $caches{SCALAR},
-    L => $caches{LIST},
-    MERGED => $options{MERGED},
-  };
 
   $memotable{$wrapper} = {
-    INFO    => $info,
-    WRAPPER => $wrapper, # cannot be in $info because $wrapper captures $info
+    L => $caches{LIST},
+    S => $caches{SCALAR},
+    U => $cref,
+    NAME => $install_name,
+    WRAPPER => $wrapper,
   };
 
   $wrapper			# Return just memoized version
 }
 
-# This function tries to load a tied hash class and tie the hash to it.
-sub _my_tie {
-  my ($context, $hash, $fullopt) = @_;
-
-  # We already checked to make sure that this works.
-  my ($shortopt, $module, @args) = ref $fullopt ? @$fullopt : $fullopt;
-
-  return unless defined $shortopt && $shortopt eq 'TIE';
-  carp("TIE option to memoize() is deprecated; use HASH instead")
-      if warnings::enabled('all');
-
-  if ($context eq 'LIST' && $scalar_only{$module}) {
-    croak("You can't use $module for LIST_CACHE because it can only store scalars");
-  }
-  my $modulefile = $module . '.pm';
-  $modulefile =~ s{::}{/}g;
-  require $modulefile;
-  my $rc = (tie %$hash => $module, @args);
-  unless ($rc) {
-    croak "Couldn't tie memoize hash to `$module': $!";
-  }
-  1;
-}
-
 sub flush_cache {
   my $func = _make_cref($_[0], scalar caller);
-  my $info = $memotable{$func}{INFO};
+  my $info = $memotable{$func};
   die "$func not memoized" unless defined $info;
   for my $context (qw(S L)) {
     my $cache = $info->{$context};
@@ -179,46 +129,39 @@ sub flush_cache {
   }
 }
 
-# This is the function that manages the memo tables.
-sub _memoizer {
-  my $info = shift;
+sub _wrap {
+  my ($name, $orig, $normalizer, $merged, $caches) = @_;
+  my ($cache_L, $cache_S) = @$caches{qw(LIST SCALAR)};
+  undef $caches; # keep the pad from keeping the hash alive forever
+  Scalar::Util::set_prototype(sub {
+    my $argstr = do {
+      no warnings 'uninitialized';
+      defined $normalizer
+        ? ( wantarray ? ( &$normalizer )[0] : &$normalizer )
+          . '' # coerce undef to string while the warning is off
+        : join chr(28), @_;
+    };
 
-  my $normalizer = $info->{N};
-  my $argstr = do {
-    no warnings 'uninitialized';
-    defined $normalizer
-      ? ( wantarray ? ( &$normalizer )[0] : &$normalizer )
-        . '' # coerce undef to string while the warning is off
-      : join chr(28), @_;
-  };
-
-  if (wantarray) {
-    my $cache = $info->{L};
-    _crap_out($info->{NAME}, 'list') unless $cache;
-    if (exists $cache->{$argstr}) {
-      return @{$cache->{$argstr}};
+    if (wantarray) {
+      _crap_out($name, 'list') unless $cache_L;
+      exists $cache_L->{$argstr} ? (
+        @{$cache_L->{$argstr}}
+      ) : do {
+        my @q = do { no warnings 'recursion'; &$orig };
+        $cache_L->{$argstr} = \@q;
+        @q;
+      };
     } else {
-      my @q = &{$info->{U}};
-      $cache->{$argstr} = \@q;
-      @q;
+      _crap_out($name, 'scalar') unless $cache_S;
+      exists $cache_S->{$argstr} ? (
+        $merged ? $cache_S->{$argstr}[0] : $cache_S->{$argstr}
+      ) : do {
+        my $val = do { no warnings 'recursion'; &$orig };
+        $cache_S->{$argstr} = $merged ? [$val] : $val;
+        $val;
+      };
     }
-  } else {
-    my $cache = $info->{S};
-    _crap_out($info->{NAME}, 'scalar') unless $cache;
-    if (exists $cache->{$argstr}) { 
-      return $info->{MERGED}
-        ? $cache->{$argstr}[0] : $cache->{$argstr};
-    } else {
-      my $val = &{$info->{U}};
-      # Scalars are considered to be lists; store appropriately
-      if ($info->{MERGED}) {
-	$cache->{$argstr} = [$val];
-      } else {
-	$cache->{$argstr} = $val;
-      }
-      $val;
-    }
-  }
+  }, prototype $orig);
 }
 
 sub unmemoize {
@@ -230,7 +173,7 @@ sub unmemoize {
     croak "Could not unmemoize function `$f', because it was not memoized to begin with";
   }
 
-  my $tabent = $memotable{$cref}{INFO};
+  my $tabent = $memotable{$cref};
   unless (defined $tabent) {
     croak "Could not figure out how to unmemoize function `$f'";
   }
@@ -269,7 +212,7 @@ sub _make_cref {
     my $parent = (caller(1))[3]; # Function that called _make_cref
     croak "Usage: argument 1 to `$parent' must be a function name or reference.\n";
   }
-  $DEBUG and warn "${name}($fn) => $cref in _make_cref\n";
+  our $DEBUG and warn "${name}($fn) => $cref in _make_cref\n";
   $cref;
 }
 
@@ -280,6 +223,15 @@ sub _crap_out {
   } else {
     croak "Anonymous function called in forbidden $context context; faulting";
   }
+}
+
+# Raise an error if the user tries to specify one of these packages as a
+# tie for LIST_CACHE
+my %scalar_only = map {($_ => 1)} qw(DB_File GDBM_File SDBM_File ODBM_File), map +($_, "Memoize::$_"), qw(AnyDBM_File NDBM_File);
+sub _check_suitable {
+  my ($context, $package) = @_;
+  croak "You can't use $package for LIST_CACHE because it can only store scalars"
+    if $context eq 'LIST' and $scalar_only{$package};
 }
 
 1;
@@ -320,11 +272,13 @@ Options include:
 
 =head1 DESCRIPTION
 
-`Memoizing' a function makes it faster by trading space for time.  It
+I<Memoizing> a function makes it faster by trading space for time. It
 does this by caching the return values of the function in a table.
 If you call the function again with the same arguments, C<memoize>
 jumps in and gives you the value out of the table, instead of letting
 the function compute the value all over again.
+
+=head1 EXAMPLE
 
 Here is an extreme example.  Consider the Fibonacci sequence, defined
 by the following function:
@@ -348,14 +302,14 @@ run---fib(14) makes 1,200 extra recursive calls to itself, to compute
 and recompute things that it already computed.
 
 This function is a good candidate for memoization.  If you memoize the
-`fib' function above, it will compute fib(14) exactly once, the first
+C<fib> function above, it will compute fib(14) exactly once, the first
 time it needs to, and then save the result in a table.  Then if you
 ask for fib(14) again, it gives you the result out of the table.
 While computing fib(14), instead of computing fib(12) twice, it does
 it once; the second time it needs the value it gets it from the table.
 It doesn't compute fib(11) four times; it computes it once, getting it
 from the table the next three times.  Instead of making 1,200
-recursive calls to `fib', it makes 15.  This makes the function about
+recursive calls to C<fib>, it makes 15. This makes the function about
 150 times faster.
 
 You could do the memoization yourself, by rewriting the function, like
@@ -382,8 +336,8 @@ This makes it easy to turn memoizing on and off.
 
 Here's an even simpler example: I wrote a simple ray tracer; the
 program would look in a certain direction, figure out what it was
-looking at, and then convert the `color' value (typically a string
-like `red') of that object to a red, green, and blue pixel value, like
+looking at, and then convert the C<color> value (typically a string
+like C<red>) of that object to a red, green, and blue pixel value, like
 this:
 
     for ($direction = 0; $direction < 300; $direction++) {
@@ -921,8 +875,8 @@ function (or when your program exits):
         tie my %cache => 'Memoize::Storable', $filename, 'nstore';
 	memoize 'function', SCALAR_CACHE => [HASH => \%cache];
 
-Include the `nstore' option to have the C<Storable> database written
-in `network order'.  (See L<Storable> for more details about this.)
+Include the C<nstore> option to have the C<Storable> database written
+in I<network order>. (See L<Storable> for more details about this.)
 
 The C<flush_cache()> function will raise a run-time error unless the
 tied package provides a C<CLEAR> method.
@@ -953,27 +907,19 @@ C<f()> (C<f> called with no arguments) will not be memoized.  If this
 is a big problem, you can supply a normalizer function that prepends
 C<"x"> to every key.
 
-=head1 AUTHOR
-
-Mark-Jason Dominus
+=head1 SEE ALSO
 
 At
-http://perl.plover.com/MiniMemoize/ there is an article about
+L<https://perl.plover.com/MiniMemoize/> there is an article about
 memoization and about the internals of Memoize that appeared in The
 Perl Journal, issue #13.  (This article is also included in the
-Memoize distribution as `article.html'.)
+Memoize distribution as F<article.html>.)
 
-The author's book I<Higher-Order Perl> (2005, ISBN 1558607013, published
+Mark-Jason Dominus's book I<Higher-Order Perl> (2005, ISBN 1558607013,
+published
 by Morgan Kaufmann) discusses memoization (and many other 
 topics) in tremendous detail. It is available on-line for free.
-For more information, visit http://hop.perl.plover.com/ .
-
-=head1 COPYRIGHT AND LICENSE
-
-Copyright 1998, 1999, 2000, 2001, 2012  by Mark Jason Dominus
-
-This library is free software; you may redistribute it and/or modify
-it under the same terms as Perl itself.
+For more information, visit L<https://hop.perl.plover.com/>.
 
 =head1 THANK YOU
 
@@ -999,5 +945,16 @@ being a light in the world.
 Special thanks to Jarkko Hietaniemi, the 5.8.0 pumpking, for including
 this module in the core and for his patient and helpful guidance
 during the integration process.
+
+=head1 AUTHOR
+
+Mark Jason Dominus
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is copyright (c) 2012 by Mark Jason Dominus.
+
+This is free software; you can redistribute it and/or modify it under
+the same terms as the Perl 5 programming language system itself.
 
 =cut

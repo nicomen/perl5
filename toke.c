@@ -115,6 +115,15 @@ static const char ident_var_zero_multi_digit[] = "Numeric variables with more th
  * 1999-02-27 mjd-perl-patch@plover.com */
 #define isCONTROLVAR(x) (isUPPER(x) || memCHRs("[\\]^_?", (x)))
 
+/* Non-identifier plugin infix operators are allowed any printing character
+ * except spaces, digits, or identifier chars
+ */
+#define isPLUGINFIX(c) (c && !isSPACE(c) && !isDIGIT(c) && !isALPHA(c))
+/* Plugin infix operators may not begin with a quote symbol */
+#define isPLUGINFIX_FIRST(c) (isPLUGINFIX(c) && c != '"' && c != '\'')
+
+#define PLUGINFIX_IS_ENABLED  UNLIKELY(PL_infix_plugin != &Perl_infix_plugin_standard)
+
 #define SPACE_OR_TAB(c) isBLANK_A(c)
 
 #define HEXFP_PEEK(s)     \
@@ -491,6 +500,12 @@ static struct debug_tokens {
     DEBUG_TOKEN (IVAL,  PERLY_TILDE),
     DEBUG_TOKEN (OPVAL, PLUGEXPR),
     DEBUG_TOKEN (OPVAL, PLUGSTMT),
+    DEBUG_TOKEN (PVAL,  PLUGADDOP),
+    DEBUG_TOKEN (PVAL,  PLUGHIGHOP),
+    DEBUG_TOKEN (PVAL,  PLUGLOWOP),
+    DEBUG_TOKEN (PVAL,  PLUGMULOP),
+    DEBUG_TOKEN (PVAL,  PLUGPOWOP),
+    DEBUG_TOKEN (PVAL,  PLUGRELOP),
     DEBUG_TOKEN (OPVAL, PMFUNC),
     DEBUG_TOKEN (NONE,  POSTJOIN),
     DEBUG_TOKEN (NONE,  POSTDEC),
@@ -642,6 +657,10 @@ S_no_op(pTHX_ const char *const what, char *s)
 {
     char * const oldbp = PL_bufptr;
     const bool is_first = (PL_oldbufptr == PL_linestart);
+    SV *message = sv_2mortal( newSVpvf(
+                   PERL_DIAG_WARN_SYNTAX("%s found where operator expected"),
+                   what
+                  ) );
 
     PERL_ARGS_ASSERT_NO_OP;
 
@@ -649,34 +668,54 @@ S_no_op(pTHX_ const char *const what, char *s)
         s = oldbp;
     else
         PL_bufptr = s;
-    yywarn(Perl_form(aTHX_ "%s found where operator expected", what), UTF ? SVf_UTF8 : 0);
+
     if (ckWARN_d(WARN_SYNTAX)) {
-        if (is_first)
-            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                    "\t(Missing semicolon on previous line?)\n");
-        else if (PL_oldoldbufptr && isIDFIRST_lazy_if_safe(PL_oldoldbufptr,
-                                                           PL_bufend,
-                                                           UTF))
-        {
+        bool has_more = FALSE;
+        if (is_first) {
+            has_more = TRUE;
+            sv_catpvs(message,
+                    " (Missing semicolon on previous line?)");
+        }
+        else if (PL_oldoldbufptr) {
+            /* yyerror (via yywarn) would do this itself, so we should too */
             const char *t;
             for (t = PL_oldoldbufptr;
-                 (isWORDCHAR_lazy_if_safe(t, PL_bufend, UTF) || *t == ':');
+                 t < PL_bufptr && isSPACE(*t);
                  t += UTF ? UTF8SKIP(t) : 1)
             {
                 NOOP;
             }
-            if (t < PL_bufptr && isSPACE(*t))
-                Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                        "\t(Do you need to predeclare %" UTF8f "?)\n",
-                      UTF8fARG(UTF, t - PL_oldoldbufptr, PL_oldoldbufptr));
+            /* see if we can identify the cause of the warning */
+            if (isIDFIRST_lazy_if_safe(t,PL_bufend,UTF))
+            {
+                const char *t_start= t;
+                for ( ;
+                     (isWORDCHAR_lazy_if_safe(t, PL_bufend, UTF) || *t == ':');
+                     t += UTF ? UTF8SKIP(t) : 1)
+                {
+                    NOOP;
+                }
+                if (t < PL_bufptr && isSPACE(*t)) {
+                    has_more = TRUE;
+                    sv_catpvf( message,
+                            " (Do you need to predeclare \"%" UTF8f "\"?)",
+                          UTF8fARG(UTF, t - t_start, t_start));
+                }
+            }
         }
-        else {
+        if (!has_more) {
+            const char *t= oldbp;
             assert(s >= oldbp);
-            Perl_warner(aTHX_ packWARN(WARN_SYNTAX),
-                    "\t(Missing operator before %" UTF8f "?)\n",
-                     UTF8fARG(UTF, s - oldbp, oldbp));
+            while (t < s && isSPACE(*t)) {
+                t += UTF ? UTF8SKIP(t) : 1;
+            }
+
+            sv_catpvf(message,
+                    " (Missing operator before \"%" UTF8f "\"?)",
+                     UTF8fARG(UTF, s - t, t));
         }
     }
+    yywarn(SvPV_nolen(message), UTF ? SVf_UTF8 : 0);
     PL_bufptr = oldbp;
 }
 
@@ -5066,7 +5105,23 @@ yyl_sigvar(pTHX_ char *s)
             PL_oldbufptr = s;
 
             ++s;
-            NEXTVAL_NEXTTOKE.ival = 0;
+            NEXTVAL_NEXTTOKE.ival = OP_SASSIGN;
+            force_next(ASSIGNOP);
+            PL_expect = XTERM;
+        }
+        else if(*s == '/' && s[1] == '/' && s[2] == '=') {
+            PL_oldbufptr = s;
+
+            s += 3;
+            NEXTVAL_NEXTTOKE.ival = OP_DORASSIGN;
+            force_next(ASSIGNOP);
+            PL_expect = XTERM;
+        }
+        else if(*s == '|' && s[1] == '|' && s[2] == '=') {
+            PL_oldbufptr = s;
+
+            s += 3;
+            NEXTVAL_NEXTTOKE.ival = OP_ORASSIGN;
             force_next(ASSIGNOP);
             PL_expect = XTERM;
         }
@@ -5914,7 +5969,6 @@ yyl_colon(pTHX_ char *s)
         s = skipspace(s);
         attrs = NULL;
         while (isIDFIRST_lazy_if_safe(s, PL_bufend, UTF)) {
-            bool sig = PL_parser->sig_seen;
             I32 tmp;
             SV *sv;
             STRLEN len;
@@ -5954,45 +6008,8 @@ yyl_colon(pTHX_ char *s)
                 PL_lex_stuff = NULL;
             }
             else {
-                /* NOTE: any CV attrs applied here need to be part of
-                   the CVf_BUILTIN_ATTRS define in cv.h! */
-                if (!PL_in_my && memEQs(SvPVX(sv), len, "lvalue")) {
-                    sv_free(sv);
-                    if (!sig)
-                        CvLVALUE_on(PL_compcv);
-                }
-                else if (!PL_in_my && memEQs(SvPVX(sv), len, "method")) {
-                    sv_free(sv);
-                    if (!sig)
-                        CvNOWARN_AMBIGUOUS_on(PL_compcv);
-                }
-                else if (!PL_in_my && memEQs(SvPVX(sv), len, "const")) {
-                    sv_free(sv);
-                    if (!sig) {
-                        Perl_ck_warner_d(aTHX_
-                            packWARN(WARN_EXPERIMENTAL__CONST_ATTR),
-                           ":const is experimental"
-                        );
-                        CvANONCONST_on(PL_compcv);
-                        if (!CvANON(PL_compcv))
-                            yyerror(":const is not permitted on named "
-                                    "subroutines");
-                    }
-                }
-                /* After we've set the flags, it could be argued that
-                   we don't need to do the attributes.pm-based setting
-                   process, and shouldn't bother appending recognized
-                   flags.  To experiment with that, uncomment the
-                   following "else".  (Note that's already been
-                   uncommented.  That keeps the above-applied built-in
-                   attributes from being intercepted (and possibly
-                   rejected) by a package's attribute routines, but is
-                   justified by the performance win for the common case
-                   of applying only built-in attributes.) */
-                else
-                    attrs = op_append_elem(OP_LIST, attrs,
-                                        newSVOP(OP_CONST, 0,
-                                                sv));
+                attrs = op_append_elem(OP_LIST, attrs,
+                                    newSVOP(OP_CONST, 0, sv));
             }
             s = skipspace(d);
             if (*s == ':' && s[1] != ':')
@@ -8731,6 +8748,41 @@ yyl_key_core(pTHX_ char *s, STRLEN len, struct code c)
     return yyl_word_or_keyword(aTHX_ s, len, key, orig_keyword, c);
 }
 
+struct Perl_custom_infix_result {
+    struct Perl_custom_infix *def;
+    SV                       *parsedata;
+};
+
+static enum yytokentype tokentype_for_plugop(struct Perl_custom_infix *def)
+{
+    enum Perl_custom_infix_precedence prec = def->prec;
+    if(prec <= INFIX_PREC_LOW)
+        return PLUGLOWOP;
+    if(prec <= INFIX_PREC_REL)
+        return PLUGRELOP;
+    if(prec <= INFIX_PREC_ADD)
+        return PLUGADDOP;
+    if(prec <= INFIX_PREC_MUL)
+        return PLUGMULOP;
+    if(prec <= INFIX_PREC_POW)
+        return PLUGPOWOP;
+    return PLUGHIGHOP;
+}
+
+OP *
+Perl_build_infix_plugin(pTHX_ OP *lhs, OP *rhs, void *tokendata)
+{
+    PERL_ARGS_ASSERT_BUILD_INFIX_PLUGIN;
+
+    struct Perl_custom_infix_result *result = (struct Perl_custom_infix_result *)tokendata;
+    SAVEFREEPV(result);
+    if(result->parsedata)
+        SAVEFREESV(result->parsedata);
+
+    return (*result->def->build_op)(aTHX_
+        &result->parsedata, lhs, rhs, result->def);
+}
+
 static int
 yyl_keylookup(pTHX_ char *s, GV *gv)
 {
@@ -8788,6 +8840,30 @@ yyl_keylookup(pTHX_ char *s, GV *gv)
             return REPORT(PLUGEXPR);
         } else {
             Perl_croak(aTHX_ "Bad plugin affecting keyword '%s'", PL_tokenbuf);
+        }
+    }
+
+    /* Check for plugged-in named operator */
+    if(PLUGINFIX_IS_ENABLED) {
+        struct Perl_custom_infix *def;
+        STRLEN result;
+        result = PL_infix_plugin(aTHX_ PL_tokenbuf, len, &def);
+        if(result) {
+            if(result != len)
+                Perl_croak(aTHX_ "Bad infix plugin result (%zd) - did not consume entire identifier <%s>\n",
+                    result, PL_tokenbuf);
+            PL_bufptr = s = d;
+            struct Perl_custom_infix_result *result;
+            Newx(result, 1, struct Perl_custom_infix_result);
+            result->def = def;
+            result->parsedata = NULL;
+            if(def->parse) {
+                (*def->parse)(aTHX_ &result->parsedata, def);
+                s = PL_bufptr; /* restore local s variable */
+            }
+            pl_yylval.pval = (char *)result;
+            CLINE;
+            OPERATOR(tokentype_for_plugop(def));
         }
     }
 
@@ -8869,6 +8945,34 @@ yyl_try(pTHX_ char *s)
     int tok;
 
   retry:
+    /* Check for plugged-in symbolic operator */
+    if(PLUGINFIX_IS_ENABLED && isPLUGINFIX_FIRST(*s)) {
+        struct Perl_custom_infix *def;
+        char *s_end = s, *d = PL_tokenbuf;
+        STRLEN len;
+
+        /* Copy the longest sequence of isPLUGINFIX() chars into PL_tokenbuf */
+        while(s_end < PL_bufend && d < PL_tokenbuf+sizeof(PL_tokenbuf)-1 && isPLUGINFIX(*s_end))
+            *d++ = *s_end++;
+        *d = '\0';
+
+        if((len = (*PL_infix_plugin)(aTHX_ PL_tokenbuf, s_end - s, &def))) {
+            s += len;
+            struct Perl_custom_infix_result *result;
+            Newx(result, 1, struct Perl_custom_infix_result);
+            result->def = def;
+            result->parsedata = NULL;
+            if(def->parse) {
+                PL_bufptr = s;
+                (*def->parse)(aTHX_ &result->parsedata, def);
+                s = PL_bufptr; /* restore local s variable */
+            }
+            pl_yylval.pval = (char *)result;
+            CLINE;
+            OPERATOR(tokentype_for_plugop(def));
+        }
+    }
+
     switch (*s) {
     default:
         if (UTF ? isIDFIRST_utf8_safe(s, PL_bufend) : isALNUMC(*s)) {
@@ -11287,8 +11391,7 @@ S_scan_inputsymbol(pTHX_ char *start)
                     goto intro_sym;
                 }
                 else {
-                    OP * const o = newOP(OP_PADSV, 0);
-                    o->op_targ = tmp;
+                    OP * const o = newPADxVOP(OP_PADSV, 0, tmp);
                     PL_lex_op = readline_overriden
                         ? newUNOP(OP_ENTERSUB, OPf_STACKED,
                                 op_append_elem(OP_LIST, o,
@@ -11539,7 +11642,7 @@ Perl_scan_str(pTHX_ char *start, int keep_bracketed_quoted, int keep_delims, int
     /* create a new SV to hold the contents.  79 is the SV's initial length.
        What a random number. */
     sv = newSV_type(SVt_PVIV);
-    SvGROW(sv, 79);
+    sv_grow_fresh(sv, 79);
     SvIV_set(sv, close_delim_code);
     (void)SvPOK_only(sv);		/* validate pointer */
 
@@ -12530,6 +12633,92 @@ Perl_start_subparse(pTHX_ I32 is_format, U32 flags)
     return oldsavestack_ix;
 }
 
+/* If o represents a builtin attribute, apply it to cv and returns true.
+ * Otherwise does nothing and returns false
+ */
+
+STATIC bool
+S_apply_builtin_cv_attribute(pTHX_ CV *cv, OP *o)
+{
+    assert(o->op_type == OP_CONST);
+    SV *sv = cSVOPo_sv;
+    STRLEN len = SvCUR(sv);
+
+    /* NOTE: any CV attrs applied here need to be part of
+       the CVf_BUILTIN_ATTRS define in cv.h! */
+
+    if(memEQs(SvPVX(sv), len, "lvalue"))
+        CvLVALUE_on(cv);
+    else if(memEQs(SvPVX(sv), len, "method"))
+        CvNOWARN_AMBIGUOUS_on(cv);
+    else if(memEQs(SvPVX(sv), len, "const")) {
+        Perl_ck_warner_d(aTHX_
+            packWARN(WARN_EXPERIMENTAL__CONST_ATTR),
+           ":const is experimental"
+        );
+        CvANONCONST_on(cv);
+        if (!CvANON(cv))
+            yyerror(":const is not permitted on named subroutines");
+    }
+    else
+        return false;
+
+    return true;
+}
+
+/*
+=for apidoc apply_builtin_cv_attributes
+
+Given an OP_LIST containing attribute definitions, filter it for known builtin
+attributes to apply to the cv, returning a possibly-smaller list containing
+just the remaining ones.
+
+=cut
+*/
+
+OP *
+Perl_apply_builtin_cv_attributes(pTHX_ CV *cv, OP *attrlist)
+{
+    PERL_ARGS_ASSERT_APPLY_BUILTIN_CV_ATTRIBUTES;
+
+    if(!attrlist)
+        return attrlist;
+
+    if(attrlist->op_type != OP_LIST) {
+        /* Not in fact a list but just a single attribute */
+        if(S_apply_builtin_cv_attribute(aTHX_ cv, attrlist)) {
+            op_free(attrlist);
+            return NULL;
+        }
+
+        return attrlist;
+    }
+
+    OP *prev = cLISTOPx(attrlist)->op_first;
+    assert(prev->op_type == OP_PUSHMARK);
+    OP *o = OpSIBLING(prev);
+
+    OP *next;
+    for(; o; o = next) {
+        next = OpSIBLING(o);
+
+        if(S_apply_builtin_cv_attribute(aTHX_ cv, o)) {
+            op_sibling_splice(attrlist, prev, 1, NULL);
+            op_free(o);
+        }
+        else {
+            prev = o;
+        }
+    }
+
+    if(OpHAS_SIBLING(cLISTOPx(attrlist)->op_first))
+        return attrlist;
+
+    /* The list is now entirely empty, we might as well discard it */
+    op_free(attrlist);
+    return NULL;
+}
+
 
 /* Do extra initialisation of a CV (typically one just created by
  * start_subparse()) if that CV is for a named sub
@@ -13101,6 +13290,18 @@ Perl_keyword_plugin_standard(pTHX_
     return KEYWORD_PLUGIN_DECLINE;
 }
 
+STRLEN
+Perl_infix_plugin_standard(pTHX_
+        char *operator_ptr, STRLEN operator_len, struct Perl_custom_infix **def)
+{
+    PERL_ARGS_ASSERT_INFIX_PLUGIN_STANDARD;
+    PERL_UNUSED_CONTEXT;
+    PERL_UNUSED_ARG(operator_ptr);
+    PERL_UNUSED_ARG(operator_len);
+    PERL_UNUSED_ARG(def);
+    return 0;
+}
+
 /*
 =for apidoc_section $lexer
 =for apidoc wrap_keyword_plugin
@@ -13170,6 +13371,24 @@ Perl_wrap_keyword_plugin(pTHX_
     if (!*old_plugin_p) {
         *old_plugin_p = PL_keyword_plugin;
         PL_keyword_plugin = new_plugin;
+    }
+    KEYWORD_PLUGIN_MUTEX_UNLOCK;
+}
+
+void
+Perl_wrap_infix_plugin(pTHX_
+    Perl_infix_plugin_t new_plugin, Perl_infix_plugin_t *old_plugin_p)
+{
+
+    PERL_UNUSED_CONTEXT;
+    PERL_ARGS_ASSERT_WRAP_INFIX_PLUGIN;
+    if (*old_plugin_p) return;
+    /* We use the same mutex as for PL_keyword_plugin as it's so rare either
+     * of them is actually updated; no need for a dedicated one each */
+    KEYWORD_PLUGIN_MUTEX_LOCK;
+    if (!*old_plugin_p) {
+        *old_plugin_p = PL_infix_plugin;
+        PL_infix_plugin = new_plugin;
     }
     KEYWORD_PLUGIN_MUTEX_UNLOCK;
 }

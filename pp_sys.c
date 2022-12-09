@@ -1348,7 +1348,7 @@ PP(pp_select)
     if (!egv)
         egv = PL_defoutgv;
     hv = isGV_with_GP(egv) ? GvSTASH(egv) : NULL;
-    gvp = hv && HvENAME(hv)
+    gvp = hv && HvHasENAME(hv)
                 ? (GV**)hv_fetch(hv, GvNAME(egv), HEK_UTF8(GvNAME_HEK(egv)) ? -GvNAMELEN(egv) : GvNAMELEN(egv), FALSE)
                 : NULL;
     if (gvp && *gvp == egv) {
@@ -1854,9 +1854,8 @@ PP(pp_sysread)
            reading to:  */
         SvCUR_set(bufsv, offset);
 
-        read_target = sv_newmortal();
-        SvUPGRADE(read_target, SVt_PV);
-        buffer = SvGROW(read_target, (STRLEN)(length + 1));
+        read_target = newSV_type_mortal(SVt_PV);
+        buffer = sv_grow_fresh(read_target, (STRLEN)(length + 1));
     }
 
     if (PL_op->op_type == OP_SYSREAD) {

@@ -496,7 +496,7 @@ PERLVAR(I, warnhook,	SV *)
 /* switches */
 PERLVAR(I, patchlevel,	SV *)
 PERLVAR(I, localpatches, const char * const *)
-PERLVARI(I, splitstr,	const char *, " ")
+PERLVARI(I, splitstr,	char *, NULL)
 
 PERLVAR(I, minus_c,	bool)
 PERLVAR(I, minus_n,	bool)
@@ -738,11 +738,19 @@ PERLVAR(I, constpadix,	PADOFFSET)	/* lowest unused for constants */
 
 PERLVAR(I, padix_floor,	PADOFFSET)	/* how low may inner block reset padix */
 
+#if defined(USE_POSIX_2008_LOCALE) && defined(MULTIPLICITY)
+PERLVARI(I, cur_locale_obj, locale_t, NULL)
+#endif
 #ifdef USE_PL_CURLOCALES
 
 /* This is the most number of categories we've encountered so far on any
- * platform */
+ * platform, doesn't include LC_ALL */
 PERLVARA(I, curlocales, 12, const char *)
+
+#endif
+#ifdef USE_PL_CUR_LC_ALL
+
+PERLVARI(I, cur_LC_ALL, const char *, NULL)
 
 #endif
 #ifdef USE_LOCALE_COLLATE

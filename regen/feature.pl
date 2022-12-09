@@ -23,26 +23,27 @@ use warnings;
 
 # (feature name) => (internal name, used in %^H and macro names)
 my %feature = (
-    say             => 'say',
-    state           => 'state',
-    switch          => 'switch',
-    bitwise         => 'bitwise',
-    evalbytes       => 'evalbytes',
-    current_sub     => '__SUB__',
-    refaliasing     => 'refaliasing',
-    postderef_qq    => 'postderef_qq',
-    unicode_eval    => 'unieval',
-    declared_refs   => 'myref',
-    unicode_strings => 'unicode',
-    fc              => 'fc',
-    signatures      => 'signatures',
-    isa             => 'isa',
-    indirect        => 'indirect',
-    multidimensional => 'multidimensional',
-    bareword_filehandles => 'bareword_filehandles',
-    try             => 'try',
-    defer           => 'defer',
+    say                     => 'say',
+    state                   => 'state',
+    switch                  => 'switch',
+    bitwise                 => 'bitwise',
+    evalbytes               => 'evalbytes',
+    current_sub             => '__SUB__',
+    refaliasing             => 'refaliasing',
+    postderef_qq            => 'postderef_qq',
+    unicode_eval            => 'unieval',
+    declared_refs           => 'myref',
+    unicode_strings         => 'unicode',
+    fc                      => 'fc',
+    signatures              => 'signatures',
+    isa                     => 'isa',
+    indirect                => 'indirect',
+    multidimensional        => 'multidimensional',
+    bareword_filehandles    => 'bareword_filehandles',
+    try                     => 'try',
+    defer                   => 'defer',
     extra_paired_delimiters => 'more_delims',
+    module_true             => 'module_true',
 );
 
 # NOTE: If a feature is ever enabled in a non-contiguous range of Perl
@@ -62,7 +63,7 @@ use constant V5_35  => sort grep {; $_ ne 'switch'
                                  && $_ ne 'indirect'
                                  && $_ ne 'multidimensional' } +V5_27, qw{isa signatures};
 
-use constant V5_37  => sort grep {; $_ ne 'bareword_filehandles' } +V5_35;
+use constant V5_37  => sort grep {; $_ ne 'bareword_filehandles' } +V5_35, qw{module_true};
 
 #
 # when updating features please also update the Pod entry for L</"FEATURES CHEAT SHEET">
@@ -305,8 +306,13 @@ for (@HintedBundles) {
 print $h <<'EOH';
 #define FEATURE_BUNDLE_CUSTOM	(HINT_FEATURE_MASK >> HINT_FEATURE_SHIFT)
 
-#define CURRENT_HINTS \
+/* this is preserved for testing and asserts */
+#define OLD_CURRENT_HINTS \
     (PL_curcop == &PL_compiling ? PL_hints : PL_curcop->cop_hints)
+/* this is the same thing, but simpler (no if) as PL_hints expands
+   to PL_compiling.cop_hints */
+#define CURRENT_HINTS \
+    PL_curcop->cop_hints
 #define CURRENT_FEATURE_BUNDLE \
     ((CURRENT_HINTS & HINT_FEATURE_MASK) >> HINT_FEATURE_SHIFT)
 
@@ -492,8 +498,7 @@ read_only_bottom_close_and_rename($h);
 
 __END__
 package feature;
-
-our $VERSION = '1.76';
+our $VERSION = '1.78';
 
 FEATURES
 
@@ -687,9 +692,10 @@ regardless of what feature declarations are in scope.
 =head2 The 'postderef' and 'postderef_qq' features
 
 The 'postderef_qq' feature extends the applicability of L<postfix
-dereference syntax|perlref/Postfix Dereference Syntax> so that postfix array
-and scalar dereference are available in double-quotish interpolations. For
-example, it makes the following two statements equivalent:
+dereference syntax|perlref/Postfix Dereference Syntax> so that
+postfix array dereference, postfix scalar dereference, and
+postfix array highest index access are available in double-quotish interpolations.
+For example, it makes the following two statements equivalent:
 
   my $s = "[@{ $h->{a} }]";
   my $s = "[$h->{a}->@*]";
@@ -1281,6 +1287,14 @@ The complete list of accepted paired delimiters as of Unicode 14.0 is:
  🢩  🢨    U+1F8A9, U+1F8A8 RIGHT/LEFTWARDS BACK-TILTED SHADOWED WHITE ARROW
  🢫  🢪    U+1F8AB, U+1F8AA RIGHT/LEFTWARDS FRONT-TILTED SHADOWED WHITE
                           ARROW
+
+=head2 The 'module_true' feature
+
+This feature removes the need to return a true value at the end of a module
+loaded with C<require> or C<use>. Any errors during compilation will cause
+failures, but reaching the end of the module when this feature is in effect
+will prevent C<perl> from throwing an exception that the module "did not return
+a true value".
 
 =head1 FEATURE BUNDLES
 

@@ -2138,8 +2138,8 @@ EOP
 
     {   # This was failing unless an explicit /d was added
         my $E0 = uni_to_native("\xE0");
+        utf8::upgrade($E0);
         my $p = qr/[_$E0]/i;
-        utf8::upgrade($p);
         like(uni_to_native("\xC0"), qr/$p/, "Verify \"\\xC0\" =~ /[\\xE0_]/i; pattern in utf8");
     }
 
@@ -2382,6 +2382,7 @@ EOF
     {   # Was looping
         watchdog(10);
         like("\x{00DF}", qr/[\x{1E9E}_]*/i, "\"\\x{00DF}\" =~ /[\\x{1E9E}_]*/i was looping");
+        watchdog(0);
     }
 
     {   # Bug #90536, caused failed assertion

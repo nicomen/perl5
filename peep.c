@@ -3032,7 +3032,11 @@ Perl_rpeep(pTHX_ OP *o)
 
             /* Two NEXTSTATEs in a row serve no purpose. Except if they happen
                to carry two labels. For now, take the easier option, and skip
-               this optimisation if the first NEXTSTATE has a label.  */
+               this optimisation if the first NEXTSTATE has a label.
+               Yves asked what about if they have different hints or features?
+               Tony thinks that as we remove the first of the pair it should
+               be fine.
+            */
             if (!CopLABEL((COP*)o) && !PERLDB_NOOPT) {
                 OP *nextop = o->op_next;
                 while (nextop) {
@@ -3146,6 +3150,62 @@ Perl_rpeep(pTHX_ OP *o)
                     break;
                 }
             }
+
+            /* If the pushmark is associated with an empty anonhash
+             * or anonlist, null out the pushmark and swap in a
+             * specialised op for the parent.
+             *     4        <@> anonhash sK* ->5
+             *     3           <0> pushmark s ->4
+             * becomes:
+             *     3        <@> emptyavhv sK* ->4
+             *     -           <0> pushmark s ->3
+             */
+            if (!OpHAS_SIBLING(o) && (o->op_next == o->op_sibparent) && (
+                (o->op_next->op_type == OP_ANONHASH) ||
+                (o->op_next->op_type == OP_ANONLIST) ) &&
+                (o->op_next->op_flags & OPf_SPECIAL) ) {
+
+                OP* anon = o->op_next;
+                /* These next two are _potentially_ a padsv and an sassign */
+                OP* padsv = anon->op_next;
+                OP* sassign = (padsv) ? padsv->op_next: NULL;
+
+                anon->op_private = (anon->op_type == OP_ANONLIST) ?
+                                                0 : OPpEMPTYAVHV_IS_HV;
+                OpTYPE_set(anon, OP_EMPTYAVHV);
+                op_null(o);
+                o = anon;
+                if (oldop) /* A previous optimization may have NULLED it */
+                    oldop->op_next = anon;
+
+                /* Further optimise scalar assignment of an empty anonhash
+                 * or anonlist by subsuming the padsv & sassign OPs. */
+                if ((padsv->op_type == OP_PADSV) &&
+                    !(padsv->op_private & OPpDEREF) &&
+                    sassign && (sassign->op_type == OP_SASSIGN) ){
+
+                    /* Take some public flags from the sassign */
+                    anon->op_flags = OPf_KIDS | OPf_SPECIAL |
+                        (anon->op_flags & OPf_PARENS) |
+                        (sassign->op_flags & (OPf_WANT|OPf_PARENS));
+
+                    /* Take some private flags from the padsv */
+                    anon->op_private |= OPpTARGET_MY |
+                        (padsv->op_private & (OPpLVAL_INTRO|OPpPAD_STATE));
+
+                    /* Take the targ slot from the padsv*/
+                    anon->op_targ = padsv->op_targ;
+                    padsv->op_targ = 0;
+
+                    /* Clean up */
+                    anon->op_next = sassign->op_next;
+                    op_null(padsv);
+                    op_null(sassign);
+                }
+                break;
+
+            }
+
 
             /* Convert a series of PAD ops for my vars plus support into a
              * single padrange op. Basically
@@ -3958,8 +4018,7 @@ Perl_rpeep(pTHX_ OP *o)
 
             if (!(o->op_private & (OPpASSIGN_BACKWARDS|OPpASSIGN_CV_TO_GV))
                 && (lval->op_type == OP_NULL) && (lval->op_private == 2) &&
-                (cBINOPx(lval)->op_first->op_type == OP_AELEMFAST_LEX) &&
-                ((I8)(cBINOPx(lval)->op_first->op_private) >= 0)
+                (cBINOPx(lval)->op_first->op_type == OP_AELEMFAST_LEX)
             ) {
                 OP * lex = cBINOPx(lval)->op_first;
                 /* SASSIGN's bitfield flags, such as op_moresib and

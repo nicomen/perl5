@@ -188,7 +188,7 @@ make_temp_object(pTHX_ SV *temp)
 static SV *
 make_warnings_object(pTHX_ const COP *const cop)
 {
-    const STRLEN *const warnings = cop->cop_warnings;
+    const char *const warnings = cop->cop_warnings;
     const char *type = 0;
     dMY_CXT;
     IV iv = sizeof(specialsv_list)/sizeof(SV*);
@@ -210,7 +210,7 @@ make_warnings_object(pTHX_ const COP *const cop)
     } else {
 	/* B assumes that warnings are a regular SV. Seems easier to keep it
 	   happy by making them into a regular SV.  */
-	return make_temp_object(aTHX_ newSVpvn((char *)(warnings + 1), *warnings));
+        return make_temp_object(aTHX_ newSVpvn(warnings, RCPV_LEN(warnings)));
     }
 }
 
@@ -547,7 +547,7 @@ static const struct OP_methods {
 #ifdef USE_ITHREADS
   { STR_WITH_LEN("pmoffset"),IVp,     STRUCT_OFFSET(struct pmop, op_pmoffset),},/*20*/
   { STR_WITH_LEN("filegv"),  op_offset_special, 0,                     },/*21*/
-  { STR_WITH_LEN("file"),    char_pp, STRUCT_OFFSET(struct cop, cop_file),  },/*22*/
+  { STR_WITH_LEN("file"),    char_pp, STRUCT_OFFSET(struct cop, cop_file),  }, /*22*/
   { STR_WITH_LEN("stash"),   op_offset_special, 0,                     },/*23*/
   { STR_WITH_LEN("stashpv"), op_offset_special, 0,                     },/*24*/
   { STR_WITH_LEN("stashoff"),PADOFFSETp,STRUCT_OFFSET(struct cop,cop_stashoff),},/*25*/
@@ -902,11 +902,9 @@ next(o)
 		ret = make_sv_object(aTHX_ (SV *)CopFILEGV((COP*)o));
 		break;
 #endif
-#ifndef USE_ITHREADS
 	    case 22: /* B::COP::file */
 		ret = sv_2mortal(newSVpv(CopFILE((COP*)o), 0));
 		break;
-#endif
 #ifdef USE_ITHREADS
 	    case 23: /* B::COP::stash */
 		ret = make_sv_object(aTHX_ (SV *)CopSTASH((COP*)o));

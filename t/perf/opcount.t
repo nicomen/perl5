@@ -868,9 +868,10 @@ test_opcount(0, 'my $h= {}; my @k= keys %{($h=undef)||{}};',
                 {
                     undef       => 1,
                     aassign     => 1,
+                    emptyavhv   => 2,
                     padav       => 1,
                     padsv       => 0,
-                    padsv_store => 1,
+                    padsv_store => 0,
                     sassign     => 0,
                 });
 
@@ -898,13 +899,13 @@ test_opcount(0, "simple aelemfast_lex + sassign replacement",
 
 # aelemfast_lex + sassign are not replaced by a combined OP
 # when key <0 (not handled, to keep the pp_ function simple
-test_opcount(0, "no aelemfast_lex + sassign replacement with neg key",
+test_opcount(0, "aelemfast_lex + sassign replacement with neg key",
                 sub { my @x = (1,2); $x[-1] = 7 },
                 {
-                    aelemfast_lex      => 1,
-                    aelemfastlex_store => 0,
+                    aelemfast_lex      => 0,
+                    aelemfastlex_store => 1,
                     padav              => 1,
-                    sassign            => 1,
+                    sassign            => 0,
                 });
 
 # aelemfast_lex + sassign optimization does not disrupt multideref
@@ -916,6 +917,99 @@ test_opcount(0, "no aelemfast_lex + sassign replacement with multideref",
                     multideref         => 1,
                     padav              => 1,
                     sassign            => 1,
+                });
+
+# emptyavhv optimizations
+
+test_opcount(0, "Empty anonlist",
+                sub { [] },
+                {
+                    anonlist  => 0,
+                    emptyavhv => 1,
+                    sassign   => 0,
+                });
+test_opcount(0, "Empty anonlist with global assignment",
+                sub { our $x; $x = [] },
+                {
+                    anonlist  => 0,
+                    emptyavhv => 1,
+                    gvsv      => 1,
+                    pushmark  => 0,
+                    sassign   => 1,
+                });
+test_opcount(0, "Empty anonlist and lexical assignment",
+                sub { my $x; $x = [] },
+                {
+                    anonlist  => 0,
+                    emptyavhv => 1,
+                    padsv     => 1,
+                    pushmark  => 0,
+                    sassign   => 0,
+                });
+test_opcount(0, "Empty anonlist and direct lexical assignment",
+                sub { my $x = [] },
+                {
+                    anonlist  => 0,
+                    emptyavhv => 1,
+                    padsv     => 0,
+                    pushmark  => 0,
+                    sassign   => 0,
+                });
+test_opcount(0, "Empty anonlist ref and direct lexical assignment",
+                sub { my $x = \[] },
+                {
+                    anonlist    => 0,
+                    emptyavhv   => 1,
+                    padsv       => 0,
+                    padsv_store => 1,
+                    pushmark    => 0,
+                    sassign     => 0,
+                    srefgen     => 1,
+                });
+test_opcount(0, "Empty anonhash",
+                sub { {} },
+                {
+                    anonhash  => 0,
+                    emptyavhv => 1,
+                    sassign   => 0,
+                });
+test_opcount(0, "Empty anonhash with global assignment",
+                sub { our $x; $x = {} },
+                {
+                    anonhash  => 0,
+                    emptyavhv => 1,
+                    gvsv      => 1,
+                    pushmark  => 0,
+                    sassign   => 1,
+                });
+test_opcount(0, "Empty anonhash and lexical assignment",
+                sub { my $x; $x = {} },
+                {
+                    anonhash  => 0,
+                    emptyavhv => 1,
+                    padsv     => 1,
+                    pushmark  => 0,
+                    sassign   => 0,
+                });
+test_opcount(0, "Empty anonhash and direct lexical assignment",
+                sub { my $x = {} },
+                {
+                    anonhash  => 0,
+                    emptyavhv => 1,
+                    padsv     => 0,
+                    pushmark  => 0,
+                    sassign   => 0,
+                });
+test_opcount(0, "Empty anonhash ref and direct lexical assignment",
+                sub { my $x = \{} },
+                {
+                    anonhash    => 0,
+                    emptyavhv   => 1,
+                    padsv       => 0,
+                    padsv_store => 1,
+                    pushmark    => 0,
+                    sassign     => 0,
+                    srefgen     => 1,
                 });
 
 done_testing();

@@ -27,6 +27,9 @@
 #ifndef sv_dup_inc
 #  define sv_dup_inc(s,t) SvREFCNT_inc(sv_dup(s,t))
 #endif
+#ifndef SvREFCNT_dec_NN
+#  define SvREFCNT_dec_NN(x)  SvREFCNT_dec(x)
+#endif
 #ifndef PERL_UNUSED_RESULT
 #  if defined(__GNUC__) && defined(HASATTRIBUTE_WARN_UNUSED_RESULT)
 #    define PERL_UNUSED_RESULT(v) STMT_START { __typeof__(v) z = (v); (void)sizeof(z); } STMT_END
@@ -241,18 +244,31 @@ S_ithread_clear(pTHX_ ithread *thread)
     S_block_most_signals(&origmask);
 #endif
 
+#if PERL_VERSION_GE(5, 37, 5)
+    int save_veto = PL_veto_switch_non_tTHX_context;
+#endif
+
     interp = thread->interp;
     if (interp) {
         dTHXa(interp);
 
+        /* We will pretend to be a thread that we are not by switching tTHX,
+         * which doesn't work with things that don't rely on tTHX during
+         * tear-down, as they will tend to rely on a mapping from the tTHX
+         * structure, and that structure is being destroyed. */
+#if PERL_VERSION_GE(5, 37, 5)
+        PL_veto_switch_non_tTHX_context = true;
+#endif
+
         PERL_SET_CONTEXT(interp);
+
         S_ithread_set(aTHX_ thread);
 
         SvREFCNT_dec(thread->params);
         thread->params = NULL;
 
         if (thread->err) {
-            SvREFCNT_dec(thread->err);
+            SvREFCNT_dec_NN(thread->err);
             thread->err = Nullsv;
         }
 
@@ -262,6 +278,10 @@ S_ithread_clear(pTHX_ ithread *thread)
     }
 
     PERL_SET_CONTEXT(aTHX);
+#if PERL_VERSION_GE(5, 37, 5)
+    PL_veto_switch_non_tTHX_context = save_veto;
+#endif
+
 #ifdef THREAD_SIGNAL_BLOCKING
     S_set_sigmask(&origmask);
 #endif

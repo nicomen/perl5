@@ -71,6 +71,7 @@
  * regular-expression syntax might require a total rethink.
  */
 #include "EXTERN.h"
+#define PERL_IN_REGEX_ENGINE
 #define PERL_IN_REGEXEC_C
 #include "perl.h"
 
@@ -183,7 +184,7 @@ static const char non_utf8_target_but_utf8_required[]
 #define JUMPABLE(rn) (                                                             \
     OP(rn) == OPEN ||                                                              \
     (OP(rn) == CLOSE &&                                                            \
-     !EVAL_CLOSE_PAREN_IS(cur_eval,ARG(rn)) ) ||                                   \
+     !EVAL_CLOSE_PAREN_IS(cur_eval,PARNO(rn)) ) ||                                 \
     OP(rn) == EVAL ||                                                              \
     OP(rn) == SUSPEND || OP(rn) == IFMATCH ||                                      \
     OP(rn) == PLUS || OP(rn) == MINMOD ||                                          \
@@ -218,7 +219,6 @@ static void S_setup_eval_state(pTHX_ regmatch_info *const reginfo);
 static void S_cleanup_regmatch_info_aux(pTHX_ void *arg);
 static regmatch_state * S_push_slab(pTHX);
 
-#define REGCP_PAREN_ELEMS 3
 #define REGCP_OTHER_ELEMS 3
 #define REGCP_FRAME_ELEMS 1
 /* REGCP_FRAME_ELEMS are not part of the REGCP_OTHER_ELEMS and
@@ -228,19 +228,22 @@ STATIC CHECKPOINT
 S_regcppush(pTHX_ const regexp *rex, I32 parenfloor, U32 maxopenparen _pDEPTH)
 {
     const int retval = PL_savestack_ix;
-    const int paren_elems_to_push =
-                (maxopenparen - parenfloor) * REGCP_PAREN_ELEMS;
+    /* Number of bytes about to be stored in the stack */
+    const SSize_t paren_bytes_to_push = sizeof(*rex->offs) * (maxopenparen - parenfloor);
+    /* Number of savestack[] entries to be filled by the paren data */
+    /* Rounding is performed in case we are few elements short */
+    const int paren_elems_to_push = (paren_bytes_to_push + sizeof(*PL_savestack) - 1) / sizeof(*PL_savestack);
     const UV total_elems = paren_elems_to_push + REGCP_OTHER_ELEMS;
     const UV elems_shifted = total_elems << SAVE_TIGHT_SHIFT;
-    I32 p;
+
     DECLARE_AND_GET_RE_DEBUG_FLAGS;
 
     PERL_ARGS_ASSERT_REGCPPUSH;
 
     if (paren_elems_to_push < 0)
-        Perl_croak(aTHX_ "panic: paren_elems_to_push, %i < 0, maxopenparen: %i parenfloor: %i REGCP_PAREN_ELEMS: %u",
+        Perl_croak(aTHX_ "panic: paren_elems_to_push, %i < 0, maxopenparen: %i parenfloor: %i",
                    (int)paren_elems_to_push, (int)maxopenparen,
-                   (int)parenfloor, (unsigned)REGCP_PAREN_ELEMS);
+                   (int)parenfloor);
 
     if ((elems_shifted >> SAVE_TIGHT_SHIFT) != total_elems)
         Perl_croak(aTHX_ "panic: paren_elems_to_push offset %" UVuf
@@ -248,8 +251,6 @@ S_regcppush(pTHX_ const regexp *rex, I32 parenfloor, U32 maxopenparen _pDEPTH)
                    total_elems,
                    (unsigned long)maxopenparen,
                    (long)parenfloor);
-
-    SSGROW(total_elems + REGCP_FRAME_ELEMS);
 
     DEBUG_BUFFERS_r(
         if ((int)maxopenparen > (int)parenfloor)
@@ -260,20 +261,27 @@ S_regcppush(pTHX_ const regexp *rex, I32 parenfloor, U32 maxopenparen _pDEPTH)
                 PTR2UV(rex->offs)
             );
     );
-    for (p = parenfloor+1; p <= (I32)maxopenparen;  p++) {
-/* REGCP_PARENS_ELEMS are pushed per pairs of parentheses. */
-        SSPUSHIV(rex->offs[p].end);
-        SSPUSHIV(rex->offs[p].start);
-        SSPUSHINT(rex->offs[p].start_tmp);
-        DEBUG_BUFFERS_r(Perl_re_exec_indentf( aTHX_
-            "    \\%" UVuf ": %" IVdf "(%" IVdf ")..%" IVdf "\n",
-            depth,
-            (UV)p,
-            (IV)rex->offs[p].start,
-            (IV)rex->offs[p].start_tmp,
-            (IV)rex->offs[p].end
-        ));
-    }
+
+    SSGROW(total_elems + REGCP_FRAME_ELEMS);
+
+    /* memcpy the offs inside the stack - it's faster than for loop */
+    memcpy(&PL_savestack[PL_savestack_ix], rex->offs + parenfloor + 1, paren_bytes_to_push);
+    PL_savestack_ix += paren_elems_to_push;
+
+    DEBUG_BUFFERS_r({
+	I32 p;
+        for (p = parenfloor + 1; p <= (I32)maxopenparen; p++) {
+            Perl_re_exec_indentf(aTHX_
+                "    \\%" UVuf ": %" IVdf "(%" IVdf ")..%" IVdf "\n",
+                depth,
+                (UV)p,
+                (IV)rex->offs[p].start,
+                (IV)rex->offs[p].start_tmp,
+                (IV)rex->offs[p].end
+            );
+        }
+    });
+
 /* REGCP_OTHER_ELEMS are pushed in any case, parentheses or no. */
     SSPUSHINT(maxopenparen);
     SSPUSHINT(rex->lastparen);
@@ -366,25 +374,36 @@ S_regcppop(pTHX_ regexp *rex, U32 *maxopenparen_p _pDEPTH)
                 PTR2UV(rex->offs)
             );
     );
-    paren = *maxopenparen_p;
-    for ( ; i > 0; i -= REGCP_PAREN_ELEMS) {
-        SSize_t tmps;
-        rex->offs[paren].start_tmp = SSPOPINT;
-        rex->offs[paren].start = SSPOPIV;
-        tmps = SSPOPIV;
-        if (paren <= rex->lastparen)
-            rex->offs[paren].end = tmps;
-        DEBUG_BUFFERS_r( Perl_re_exec_indentf( aTHX_
-            "    \\%" UVuf ": %" IVdf "(%" IVdf ")..%" IVdf "%s\n",
-            depth,
-            (UV)paren,
-            (IV)rex->offs[paren].start,
-            (IV)rex->offs[paren].start_tmp,
-            (IV)rex->offs[paren].end,
-            (paren > rex->lastparen ? "(skipped)" : ""));
-        );
-        paren--;
-    }
+    /* substract remaining elements from the stack */
+    PL_savestack_ix -= i;
+
+    /* static assert that offs struc size is not less than stack elem size */
+    STATIC_ASSERT_STMT(sizeof(*rex->offs) >= sizeof(*PL_savestack));
+
+    /* calculate actual number of offs/capture groups stored */
+    /* by doing integer division (leaving potential alignment aside) */
+    i = (i * sizeof(*PL_savestack)) / sizeof(*rex->offs);
+
+    /* calculate paren starting point */
+    /* i is our number of entries which we are subtracting from *maxopenparen_p */
+    /* and we are storing + 1 this to get the beginning */
+    paren = *maxopenparen_p - i + 1;
+
+    /* restore them */
+    memcpy(rex->offs + paren, &PL_savestack[PL_savestack_ix], i * sizeof(*rex->offs));
+
+    DEBUG_BUFFERS_r(
+        for (; paren <= *maxopenparen_p; ++paren) {
+            Perl_re_exec_indentf(aTHX_
+                "    \\%" UVuf ": %" IVdf "(%" IVdf ")..%" IVdf "%s\n",
+                depth,
+                (UV)paren,
+                (IV)rex->offs[paren].start,
+                (IV)rex->offs[paren].start_tmp,
+                (IV)rex->offs[paren].end,
+                (paren > rex->lastparen ? "(skipped)" : ""));
+        }
+    );
 #if 1
     /* It would seem that the similar code in regtry()
      * already takes care of this, and in fact it is in
@@ -8437,7 +8456,7 @@ S_regmatch(pTHX_ regmatch_info *reginfo, char *startpos, regnode *prog)
 #undef ST
 
         case OPEN: /*  (  */
-            n = ARG(scan);  /* which paren pair */
+            n = PARNO(scan);  /* which paren pair */
             rex->offs[n].start_tmp = locinput - reginfo->strbeg;
             if (n > maxopenparen)
                 maxopenparen = n;
@@ -8459,7 +8478,7 @@ S_regmatch(pTHX_ regmatch_info *reginfo, char *startpos, regnode *prog)
 
 
         case CLOSE:  /*  )  */
-            n = ARG(scan);  /* which paren pair */
+            n = PARNO(scan);  /* which paren pair */
             CLOSE_CAPTURE(n, rex->offs[n].start_tmp,
                              locinput - reginfo->strbeg);
             if ( EVAL_CLOSE_PAREN_IS( cur_eval, n ) )
@@ -8495,7 +8514,7 @@ S_regmatch(pTHX_ regmatch_info *reginfo, char *startpos, regnode *prog)
                     if ( OP(cursor) != CLOSE )
                         continue;
 
-                    n = ARG(cursor);
+                    n = PARNO(cursor);
 
                     if ( n > lastopen ) /* might be OPEN/CLOSE in the way */
                         continue;       /* so skip this one */
@@ -11721,8 +11740,429 @@ Perl_isSCRIPT_RUN(pTHX_ const U8 * s, const U8 * send, const bool utf8_target)
 
     return retval;
 }
-
 #endif /* ifndef PERL_IN_XSUB_RE */
+
+/* Buffer logic. */
+SV*
+Perl_reg_named_buff(pTHX_ REGEXP * const rx, SV * const key, SV * const value,
+                    const U32 flags)
+{
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF;
+
+    PERL_UNUSED_ARG(value);
+
+    if (flags & RXapif_FETCH) {
+        return reg_named_buff_fetch(rx, key, flags);
+    } else if (flags & (RXapif_STORE | RXapif_DELETE | RXapif_CLEAR)) {
+        Perl_croak_no_modify();
+        return NULL;
+    } else if (flags & RXapif_EXISTS) {
+        return reg_named_buff_exists(rx, key, flags)
+            ? &PL_sv_yes
+            : &PL_sv_no;
+    } else if (flags & RXapif_REGNAMES) {
+        return reg_named_buff_all(rx, flags);
+    } else if (flags & (RXapif_SCALAR | RXapif_REGNAMES_COUNT)) {
+        return reg_named_buff_scalar(rx, flags);
+    } else {
+        Perl_croak(aTHX_ "panic: Unknown flags %d in named_buff", (int)flags);
+        return NULL;
+    }
+}
+
+SV*
+Perl_reg_named_buff_iter(pTHX_ REGEXP * const rx, const SV * const lastkey,
+                         const U32 flags)
+{
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_ITER;
+    PERL_UNUSED_ARG(lastkey);
+
+    if (flags & RXapif_FIRSTKEY)
+        return reg_named_buff_firstkey(rx, flags);
+    else if (flags & RXapif_NEXTKEY)
+        return reg_named_buff_nextkey(rx, flags);
+    else {
+        Perl_croak(aTHX_ "panic: Unknown flags %d in named_buff_iter",
+                                            (int)flags);
+        return NULL;
+    }
+}
+
+SV*
+Perl_reg_named_buff_fetch(pTHX_ REGEXP * const r, SV * const namesv,
+                          const U32 flags)
+{
+    SV *ret;
+    struct regexp *const rx = ReANY(r);
+
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_FETCH;
+
+    if (rx && RXp_PAREN_NAMES(rx)) {
+        HE *he_str = hv_fetch_ent( RXp_PAREN_NAMES(rx), namesv, 0, 0 );
+        if (he_str) {
+            IV i;
+            SV* sv_dat=HeVAL(he_str);
+            I32 *nums=(I32*)SvPVX(sv_dat);
+            AV * const retarray = (flags & RXapif_ALL) ? newAV_alloc_x(SvIVX(sv_dat)) : NULL;
+            for ( i=0; i<SvIVX(sv_dat); i++ ) {
+                if ((I32)(rx->nparens) >= nums[i]
+                    && rx->offs[nums[i]].start != -1
+                    && rx->offs[nums[i]].end != -1)
+                {
+                    ret = newSVpvs("");
+                    CALLREG_NUMBUF_FETCH(r, nums[i], ret);
+                    if (!retarray)
+                        return ret;
+                } else {
+                    if (retarray)
+                        ret = newSV_type(SVt_NULL);
+                }
+                if (retarray)
+                    av_push_simple(retarray, ret);
+            }
+            if (retarray)
+                return newRV_noinc(MUTABLE_SV(retarray));
+        }
+    }
+    return NULL;
+}
+
+bool
+Perl_reg_named_buff_exists(pTHX_ REGEXP * const r, SV * const key,
+                           const U32 flags)
+{
+    struct regexp *const rx = ReANY(r);
+
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_EXISTS;
+
+    if (rx && RXp_PAREN_NAMES(rx)) {
+        if (flags & RXapif_ALL) {
+            return hv_exists_ent(RXp_PAREN_NAMES(rx), key, 0);
+        } else {
+            SV *sv = CALLREG_NAMED_BUFF_FETCH(r, key, flags);
+            if (sv) {
+                SvREFCNT_dec_NN(sv);
+                return TRUE;
+            } else {
+                return FALSE;
+            }
+        }
+    } else {
+        return FALSE;
+    }
+}
+
+SV*
+Perl_reg_named_buff_firstkey(pTHX_ REGEXP * const r, const U32 flags)
+{
+    struct regexp *const rx = ReANY(r);
+
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_FIRSTKEY;
+
+    if ( rx && RXp_PAREN_NAMES(rx) ) {
+        (void)hv_iterinit(RXp_PAREN_NAMES(rx));
+
+        return CALLREG_NAMED_BUFF_NEXTKEY(r, NULL, flags & ~RXapif_FIRSTKEY);
+    } else {
+        return FALSE;
+    }
+}
+
+SV*
+Perl_reg_named_buff_nextkey(pTHX_ REGEXP * const r, const U32 flags)
+{
+    struct regexp *const rx = ReANY(r);
+    DECLARE_AND_GET_RE_DEBUG_FLAGS;
+
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_NEXTKEY;
+
+    if (rx && RXp_PAREN_NAMES(rx)) {
+        HV *hv = RXp_PAREN_NAMES(rx);
+        HE *temphe;
+        while ( (temphe = hv_iternext_flags(hv, 0)) ) {
+            IV i;
+            IV parno = 0;
+            SV* sv_dat = HeVAL(temphe);
+            I32 *nums = (I32*)SvPVX(sv_dat);
+            for ( i = 0; i < SvIVX(sv_dat); i++ ) {
+                if ((I32)(rx->lastparen) >= nums[i] &&
+                    rx->offs[nums[i]].start != -1 &&
+                    rx->offs[nums[i]].end != -1)
+                {
+                    parno = nums[i];
+                    break;
+                }
+            }
+            if (parno || flags & RXapif_ALL) {
+                return newSVhek(HeKEY_hek(temphe));
+            }
+        }
+    }
+    return NULL;
+}
+
+SV*
+Perl_reg_named_buff_scalar(pTHX_ REGEXP * const r, const U32 flags)
+{
+    SV *ret;
+    AV *av;
+    SSize_t length;
+    struct regexp *const rx = ReANY(r);
+
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_SCALAR;
+
+    if (rx && RXp_PAREN_NAMES(rx)) {
+        if (flags & (RXapif_ALL | RXapif_REGNAMES_COUNT)) {
+            return newSViv(HvTOTALKEYS(RXp_PAREN_NAMES(rx)));
+        } else if (flags & RXapif_ONE) {
+            ret = CALLREG_NAMED_BUFF_ALL(r, (flags | RXapif_REGNAMES));
+            av = MUTABLE_AV(SvRV(ret));
+            length = av_count(av);
+            SvREFCNT_dec_NN(ret);
+            return newSViv(length);
+        } else {
+            Perl_croak(aTHX_ "panic: Unknown flags %d in named_buff_scalar",
+                                                (int)flags);
+            return NULL;
+        }
+    }
+    return &PL_sv_undef;
+}
+
+SV*
+Perl_reg_named_buff_all(pTHX_ REGEXP * const r, const U32 flags)
+{
+    struct regexp *const rx = ReANY(r);
+    AV *av = newAV();
+
+    PERL_ARGS_ASSERT_REG_NAMED_BUFF_ALL;
+
+    if (rx && RXp_PAREN_NAMES(rx)) {
+        HV *hv= RXp_PAREN_NAMES(rx);
+        HE *temphe;
+        (void)hv_iterinit(hv);
+        while ( (temphe = hv_iternext_flags(hv, 0)) ) {
+            IV i;
+            IV parno = 0;
+            SV* sv_dat = HeVAL(temphe);
+            I32 *nums = (I32*)SvPVX(sv_dat);
+            for ( i = 0; i < SvIVX(sv_dat); i++ ) {
+                if ((I32)(rx->lastparen) >= nums[i] &&
+                    rx->offs[nums[i]].start != -1 &&
+                    rx->offs[nums[i]].end != -1)
+                {
+                    parno = nums[i];
+                    break;
+                }
+            }
+            if (parno || flags & RXapif_ALL) {
+                av_push_simple(av, newSVhek(HeKEY_hek(temphe)));
+            }
+        }
+    }
+
+    return newRV_noinc(MUTABLE_SV(av));
+}
+
+void
+Perl_reg_numbered_buff_fetch(pTHX_ REGEXP * const r, const I32 paren,
+                             SV * const sv)
+{
+    struct regexp *const rx = ReANY(r);
+    char *s = NULL;
+    SSize_t i = 0;
+    SSize_t s1, t1;
+    I32 n = paren;
+
+    PERL_ARGS_ASSERT_REG_NUMBERED_BUFF_FETCH;
+
+    if (      n == RX_BUFF_IDX_CARET_PREMATCH
+           || n == RX_BUFF_IDX_CARET_FULLMATCH
+           || n == RX_BUFF_IDX_CARET_POSTMATCH
+       )
+    {
+        bool keepcopy = cBOOL(rx->extflags & RXf_PMf_KEEPCOPY);
+        if (!keepcopy) {
+            /* on something like
+             *    $r = qr/.../;
+             *    /$qr/p;
+             * the KEEPCOPY is set on the PMOP rather than the regex */
+            if (PL_curpm && r == PM_GETRE(PL_curpm))
+                 keepcopy = cBOOL(PL_curpm->op_pmflags & PMf_KEEPCOPY);
+        }
+        if (!keepcopy)
+            goto ret_undef;
+    }
+
+    if (!rx->subbeg)
+        goto ret_undef;
+
+    if (n == RX_BUFF_IDX_CARET_FULLMATCH)
+        /* no need to distinguish between them any more */
+        n = RX_BUFF_IDX_FULLMATCH;
+
+    if ((n == RX_BUFF_IDX_PREMATCH || n == RX_BUFF_IDX_CARET_PREMATCH)
+        && rx->offs[0].start != -1)
+    {
+        /* $`, ${^PREMATCH} */
+        i = rx->offs[0].start;
+        s = rx->subbeg;
+    }
+    else
+    if ((n == RX_BUFF_IDX_POSTMATCH || n == RX_BUFF_IDX_CARET_POSTMATCH)
+        && rx->offs[0].end != -1)
+    {
+        /* $', ${^POSTMATCH} */
+        s = rx->subbeg - rx->suboffset + rx->offs[0].end;
+        i = rx->sublen + rx->suboffset - rx->offs[0].end;
+    }
+    else
+    if (inRANGE(n, 0, (I32)rx->nparens) &&
+        (s1 = rx->offs[n].start) != -1  &&
+        (t1 = rx->offs[n].end) != -1)
+    {
+        /* $&, ${^MATCH},  $1 ... */
+        i = t1 - s1;
+        s = rx->subbeg + s1 - rx->suboffset;
+    } else {
+        goto ret_undef;
+    }
+
+    assert(s >= rx->subbeg);
+    assert((STRLEN)rx->sublen >= (STRLEN)((s - rx->subbeg) + i) );
+    if (i >= 0) {
+#ifdef NO_TAINT_SUPPORT
+        sv_setpvn(sv, s, i);
+#else
+        const int oldtainted = TAINT_get;
+        TAINT_NOT;
+        sv_setpvn(sv, s, i);
+        TAINT_set(oldtainted);
+#endif
+        if (RXp_MATCH_UTF8(rx))
+            SvUTF8_on(sv);
+        else
+            SvUTF8_off(sv);
+        if (TAINTING_get) {
+            if (RXp_MATCH_TAINTED(rx)) {
+                if (SvTYPE(sv) >= SVt_PVMG) {
+                    MAGIC* const mg = SvMAGIC(sv);
+                    MAGIC* mgt;
+                    TAINT;
+                    SvMAGIC_set(sv, mg->mg_moremagic);
+                    SvTAINT(sv);
+                    if ((mgt = SvMAGIC(sv))) {
+                        mg->mg_moremagic = mgt;
+                        SvMAGIC_set(sv, mg);
+                    }
+                } else {
+                    TAINT;
+                    SvTAINT(sv);
+                }
+            } else
+                SvTAINTED_off(sv);
+        }
+    } else {
+      ret_undef:
+        sv_set_undef(sv);
+        return;
+    }
+}
+
+void
+Perl_reg_numbered_buff_store(pTHX_ REGEXP * const rx, const I32 paren,
+                                                         SV const * const value)
+{
+    PERL_ARGS_ASSERT_REG_NUMBERED_BUFF_STORE;
+
+    PERL_UNUSED_ARG(rx);
+    PERL_UNUSED_ARG(paren);
+    PERL_UNUSED_ARG(value);
+
+    if (!PL_localizing)
+        Perl_croak_no_modify();
+}
+
+I32
+Perl_reg_numbered_buff_length(pTHX_ REGEXP * const r, const SV * const sv,
+                              const I32 paren)
+{
+    struct regexp *const rx = ReANY(r);
+    I32 i;
+    I32 s1, t1;
+
+    PERL_ARGS_ASSERT_REG_NUMBERED_BUFF_LENGTH;
+
+    if (   paren == RX_BUFF_IDX_CARET_PREMATCH
+        || paren == RX_BUFF_IDX_CARET_FULLMATCH
+        || paren == RX_BUFF_IDX_CARET_POSTMATCH
+    )
+    {
+        bool keepcopy = cBOOL(rx->extflags & RXf_PMf_KEEPCOPY);
+        if (!keepcopy) {
+            /* on something like
+             *    $r = qr/.../;
+             *    /$qr/p;
+             * the KEEPCOPY is set on the PMOP rather than the regex */
+            if (PL_curpm && r == PM_GETRE(PL_curpm))
+                 keepcopy = cBOOL(PL_curpm->op_pmflags & PMf_KEEPCOPY);
+        }
+        if (!keepcopy)
+            goto warn_undef;
+    }
+
+    /* Some of this code was originally in C<Perl_magic_len> in F<mg.c> */
+    switch (paren) {
+      case RX_BUFF_IDX_CARET_PREMATCH: /* ${^PREMATCH} */
+      case RX_BUFF_IDX_PREMATCH:       /* $` */
+        if (rx->offs[0].start != -1) {
+                        i = rx->offs[0].start;
+                        if (i > 0) {
+                                s1 = 0;
+                                t1 = i;
+                                goto getlen;
+                        }
+            }
+        return 0;
+
+      case RX_BUFF_IDX_CARET_POSTMATCH: /* ${^POSTMATCH} */
+      case RX_BUFF_IDX_POSTMATCH:       /* $' */
+            if (rx->offs[0].end != -1) {
+                        i = rx->sublen - rx->offs[0].end;
+                        if (i > 0) {
+                                s1 = rx->offs[0].end;
+                                t1 = rx->sublen;
+                                goto getlen;
+                        }
+            }
+        return 0;
+
+      default: /* $& / ${^MATCH}, $1, $2, ... */
+            if (paren <= (I32)rx->nparens &&
+            (s1 = rx->offs[paren].start) != -1 &&
+            (t1 = rx->offs[paren].end) != -1)
+            {
+            i = t1 - s1;
+            goto getlen;
+        } else {
+          warn_undef:
+            if (ckWARN(WARN_UNINITIALIZED))
+                report_uninit((const SV *)sv);
+            return 0;
+        }
+    }
+  getlen:
+    if (i > 0 && RXp_MATCH_UTF8(rx)) {
+        const char * const s = rx->subbeg - rx->suboffset + s1;
+        const U8 *ep;
+        STRLEN el;
+
+        i = t1 - s1;
+        if (is_utf8_string_loclen((U8*)s, i, &ep, &el))
+            i = el;
+    }
+    return i;
+}
 
 /*
  * ex: set ts=8 sts=4 sw=4 et:

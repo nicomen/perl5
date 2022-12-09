@@ -86,10 +86,13 @@
 %token <opval> LABEL
 %token <ival> LOOPEX DOTDOT YADAYADA
 %token <ival> FUNC0 FUNC1 FUNC UNIOP LSTOP
-%token <ival> MULOP ADDOP
+%token <ival> POWOP MULOP ADDOP
 %token <ival> DOLSHARP HASHBRACK NOAMP
 %token <ival> COLONATTR FORMLBRACK FORMRBRACK
 %token <ival> SUBLEXSTART SUBLEXEND
+
+/* Pluggable infix operators */
+%token <pval> PLUGLOWOP PLUGRELOP PLUGADDOP PLUGMULOP PLUGPOWOP PLUGHIGHOP
 
 %type <ival> grammar remember mremember
 %type <ival>  startsub startanonsub startformsub
@@ -118,6 +121,7 @@
 %nonassoc <ival> PREC_LOW
 %nonassoc LOOPEX
 
+%nonassoc PLUGLOWOP
 %left <ival> OROP
 %left <ival> ANDOP
 %right <ival> NOTOP
@@ -132,15 +136,17 @@
 %left <ival> BITANDOP
 %left <ival> CHEQOP NCEQOP
 %left <ival> CHRELOP NCRELOP
+%nonassoc PLUGRELOP
 %nonassoc UNIOP UNIOPSUB
 %nonassoc KW_REQUIRE
 %left <ival> SHIFTOP
-%left ADDOP
-%left MULOP
+%left ADDOP PLUGADDOP
+%left MULOP PLUGMULOP
 %left <ival> MATCHOP
 %right <ival> PERLY_EXCLAMATION_MARK PERLY_TILDE UMINUS REFGEN
-%right <ival> POWOP
+%right POWOP PLUGPOWOP
 %nonassoc <ival> PREINC PREDEC POSTINC POSTDEC POSTJOIN
+%nonassoc PLUGHIGHOP
 %left <ival> ARROW
 %nonassoc <ival> PERLY_PAREN_CLOSE
 %left <ival> PERLY_PAREN_OPEN
@@ -552,6 +558,7 @@ barestmt:	PLUGSTMT
 			}
 	|	YADAYADA PERLY_SEMICOLON
 			{
+                          /* diag_listed_as: Unimplemented */
 			  $$ = newLISTOP(OP_DIE, 0, newOP(OP_PUSHMARK, 0),
 				newSVOP(OP_CONST, 0, newSVpvs("Unimplemented")));
 			}
@@ -709,7 +716,12 @@ proto
 subattrlist
 	:	empty
 	|	COLONATTR THING
-			{ $$ = $THING; }
+			{
+			  OP *attrlist = $THING;
+			  if(attrlist && !PL_parser->sig_seen)
+			      attrlist = apply_builtin_cv_attributes(PL_compcv, attrlist);
+			  $$ = attrlist;
+			}
 	|	COLONATTR
 			{ $$ = NULL; }
 	;
@@ -743,15 +755,15 @@ sigslurpsigil:
 /* @, %, @foo, %foo */
 sigslurpelem: sigslurpsigil sigvarname sigdefault/* def only to catch errors */ 
                         {
-                            I32 sigil   = $sigslurpsigil;
-                            OP *var     = $sigvarname;
-                            OP *defexpr = $sigdefault;
+                            I32 sigil = $sigslurpsigil;
+                            OP *var   = $sigvarname;
+                            OP *defop = $sigdefault;
 
                             if (parser->sig_slurpy)
                                 yyerror("Multiple slurpy parameters not allowed");
                             parser->sig_slurpy = (char)sigil;
 
-                            if (defexpr)
+                            if (defop)
                                 yyerror("A slurpy parameter may not have "
                                         "a default value");
 
@@ -763,25 +775,34 @@ sigslurpelem: sigslurpsigil sigvarname sigdefault/* def only to catch errors */
 sigdefault
 	:	empty
         |       ASSIGNOP
-                        { $$ = newOP(OP_NULL, 0); }
+                        { $$ = newARGDEFELEMOP(0, newOP(OP_NULL, 0), parser->sig_elems); }
         |       ASSIGNOP term
-                        { $$ = $term; }
+                        {
+                            I32 flags = 0;
+                            if ($ASSIGNOP == OP_DORASSIGN)
+                                flags |= OPpARG_IF_UNDEF << 8;
+                            if ($ASSIGNOP == OP_ORASSIGN)
+                                flags |= OPpARG_IF_FALSE << 8;
+                            $$ = newARGDEFELEMOP(flags, $term, parser->sig_elems);
+                        }
 
 
 /* subroutine signature scalar element: e.g. '$x', '$=', '$x = $default' */
 sigscalarelem:
                 PERLY_DOLLAR sigvarname sigdefault
                         {
-                            OP *var     = $sigvarname;
-                            OP *defexpr = $sigdefault;
+                            OP *var   = $sigvarname;
+                            OP *defop = $sigdefault;
 
                             if (parser->sig_slurpy)
                                 yyerror("Slurpy parameter not last");
 
                             parser->sig_elems++;
 
-                            if (defexpr) {
+                            if (defop) {
                                 parser->sig_optelems++;
+
+                                OP *defexpr = cLOGOPx(defop)->op_first;
 
                                 if (   defexpr->op_type == OP_NULL
                                     && !(defexpr->op_flags & OPf_KIDS))
@@ -790,17 +811,10 @@ sigscalarelem:
                                     if (var)
                                         yyerror("Optional parameter "
                                                     "lacks default expression");
-                                    op_free(defexpr);
+                                    op_free(defop);
                                 }
                                 else { 
                                     /* a normal '=default' expression */ 
-                                    OP *defop = (OP*)alloc_LOGOP(OP_ARGDEFELEM,
-                                                        defexpr,
-                                                        LINKLIST(defexpr));
-                                    /* re-purpose op_targ to hold @_ index */
-                                    defop->op_targ =
-                                        (PADOFFSET)(parser->sig_elems - 1);
-
                                     if (var) {
                                         var->op_flags |= OPf_STACKED;
                                         (void)op_sibling_splice(var,
@@ -1107,17 +1121,25 @@ subscripted:    gelem PERLY_BRACE_OPEN expr PERLY_SEMICOLON PERLY_BRACE_CLOSE   
     ;
 
 /* Binary operators between terms */
-termbinop:	term[lhs] ASSIGNOP term[rhs]                     /* $x = $y, $x += $y */
+termbinop:	term[lhs] PLUGHIGHOP[op] term[rhs]
+			{ $$ = build_infix_plugin($lhs, $rhs, $op); }
+	|	term[lhs] ASSIGNOP term[rhs]                     /* $x = $y, $x += $y */
 			{ $$ = newASSIGNOP(OPf_STACKED, $lhs, $ASSIGNOP, $rhs); }
 	|	term[lhs] POWOP term[rhs]                        /* $x ** $y */
 			{ $$ = newBINOP($POWOP, 0, scalar($lhs), scalar($rhs)); }
+	|	term[lhs] PLUGPOWOP[op] term[rhs]
+			{ $$ = build_infix_plugin($lhs, $rhs, $op); }
 	|	term[lhs] MULOP term[rhs]                        /* $x * $y, $x x $y */
 			{   if ($MULOP != OP_REPEAT)
 				scalar($lhs);
 			    $$ = newBINOP($MULOP, 0, $lhs, scalar($rhs));
 			}
+	|	term[lhs] PLUGMULOP[op] term[rhs]
+			{ $$ = build_infix_plugin($lhs, $rhs, $op); }
 	|	term[lhs] ADDOP term[rhs]                        /* $x + $y */
 			{ $$ = newBINOP($ADDOP, 0, scalar($lhs), scalar($rhs)); }
+	|	term[lhs] PLUGADDOP[op] term[rhs]
+			{ $$ = build_infix_plugin($lhs, $rhs, $op); }
 	|	term[lhs] SHIFTOP term[rhs]                      /* $x >> $y, $x << $y */
 			{ $$ = newBINOP($SHIFTOP, 0, scalar($lhs), scalar($rhs)); }
 	|	termrelop %prec PREC_LOW               /* $x > $y, etc. */
@@ -1138,6 +1160,8 @@ termbinop:	term[lhs] ASSIGNOP term[rhs]                     /* $x = $y, $x += $y
 			{ $$ = newLOGOP(OP_DOR, 0, $lhs, $rhs); }
 	|	term[lhs] MATCHOP term[rhs]                      /* $x =~ /$y/ */
 			{ $$ = bind_match($MATCHOP, $lhs, $rhs); }
+	|	term[lhs] PLUGLOWOP[op] term[rhs]
+			{ $$ = build_infix_plugin($lhs, $rhs, $op); }
     ;
 
 termrelop:	relopchain %prec PREC_LOW
@@ -1148,6 +1172,8 @@ termrelop:	relopchain %prec PREC_LOW
 			{ yyerror("syntax error"); YYERROR; }
 	|	termrelop CHRELOP
 			{ yyerror("syntax error"); YYERROR; }
+	|	term[lhs] PLUGRELOP[op] term[rhs]
+			{ $$ = build_infix_plugin($lhs, $rhs, $op); }
 	;
 
 relopchain:	term[lhs] CHRELOP term[rhs]

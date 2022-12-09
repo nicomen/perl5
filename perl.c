@@ -407,6 +407,11 @@ perl_construct(pTHXx)
         hv_ksplit(PL_strtab, 1 << 11);
     }
 
+#ifdef USE_ITHREADS
+    PL_compiling.cop_file = NULL;
+    PL_compiling.cop_warnings = NULL;
+#endif
+
     Zero(PL_sv_consts, SV_CONSTS_COUNT, SV*);
 
 #ifndef PERL_MICRO
@@ -1129,17 +1134,30 @@ perl_destruct(pTHXx)
     {
         /* This also makes sure we aren't using a locale object that gets freed
          * below */
-        const locale_t old_locale = uselocale(LC_GLOBAL_LOCALE);
-        if (   old_locale != LC_GLOBAL_LOCALE
-#  ifdef USE_POSIX_2008_LOCALE
-            && old_locale != PL_C_locale_obj
-#  endif
+        if (   PL_cur_locale_obj != NULL
+            && PL_cur_locale_obj != LC_GLOBAL_LOCALE
+            && PL_cur_locale_obj != PL_C_locale_obj
         ) {
-            DEBUG_Lv(PerlIO_printf(Perl_debug_log,
-                     "%s:%d: Freeing %p\n", __FILE__, __LINE__, old_locale));
-            freelocale(old_locale);
+            locale_t cur_locale = uselocale((locale_t) 0);
+            if (cur_locale == PL_cur_locale_obj) {
+                uselocale(LC_GLOBAL_LOCALE);
+            }
+
+            freelocale(PL_cur_locale_obj);
+            PL_cur_locale_obj = NULL;
         }
     }
+
+#  ifdef USE_PL_CUR_LC_ALL
+
+    if (PL_cur_LC_ALL) {
+        DEBUG_L( PerlIO_printf(Perl_debug_log, "PL_cur_LC_ALL=%p\n", PL_cur_LC_ALL));
+        Safefree(PL_cur_LC_ALL);
+        PL_cur_LC_ALL = NULL;
+    }
+
+#  endif
+
     if (PL_scratch_locale_obj) {
         freelocale(PL_scratch_locale_obj);
         PL_scratch_locale_obj = NULL;
@@ -2770,6 +2788,14 @@ S_run_body(pTHX_ I32 oldscope)
     PERL_SET_PHASE(PERL_PHASE_RUN);
 
     if (PL_restartop) {
+#ifdef DEBUGGING
+        /* this complements the "EXECUTING..." debug we emit above.
+         * it will show up when an eval fails in the main program level
+         * and the code continues after the error.
+         */
+        if (!DEBUG_q_TEST)
+          PERL_DEBUG(PerlIO_printf(Perl_debug_log, "\nCONTINUING...\n\n"));
+#endif
         PL_restartjmpenv = NULL;
         PL_op = PL_restartop;
         PL_restartop = 0;
@@ -3523,8 +3549,8 @@ Perl_moreswitches(pTHX_ const char *s)
                    numlen = 0;
                    s--;
               }
-              PL_rs = newSVpvs("");
-              tmps = (U8*) SvGROW(PL_rs, (STRLEN)(UVCHR_SKIP(rschar) + 1));
+              PL_rs = newSV((STRLEN)(UVCHR_SKIP(rschar) + 1));
+              tmps = (U8*)SvPVCLEAR_FRESH(PL_rs);
               uvchr_to_utf8(tmps, rschar);
               SvCUR_set(PL_rs, UVCHR_SKIP(rschar));
               SvUTF8_on(PL_rs);
@@ -3554,9 +3580,12 @@ Perl_moreswitches(pTHX_ const char *s)
         PL_minus_a = TRUE;
         PL_minus_F = TRUE;
         PL_minus_n = TRUE;
-        PL_splitstr = ++s;
-        while (*s && !isSPACE(*s)) ++s;
-        PL_splitstr = savepvn(PL_splitstr, s - PL_splitstr);
+        {
+            const char *start = ++s;
+            while (*s && !isSPACE(*s)) ++s;
+            Safefree(PL_splitstr);
+            PL_splitstr = savepvn(start, s - start);
+        }
         return s;
     case 'a':
         PL_minus_a = TRUE;
@@ -3797,12 +3826,12 @@ Perl_moreswitches(pTHX_ const char *s)
         return s;
     case 'W':
         PL_dowarn = G_WARN_ALL_ON|G_WARN_ON;
-    free_and_set_cop_warnings(&PL_compiling, pWARN_ALL);
+        free_and_set_cop_warnings(&PL_compiling, pWARN_ALL);
         s++;
         return s;
     case 'X':
         PL_dowarn = G_WARN_ALL_OFF;
-    free_and_set_cop_warnings(&PL_compiling, pWARN_NONE);
+        free_and_set_cop_warnings(&PL_compiling, pWARN_NONE);
         s++;
         return s;
     case '*':

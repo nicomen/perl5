@@ -1021,7 +1021,7 @@ static NV my_log2(NV x)
 /* XXX nexttoward */
 
 /* GCC's FLT_ROUNDS is (wrongly) hardcoded to 1 (at least up to 11.x) */
-#if defined(PERL_IS_GCC) /* && __GNUC__ < XXX */
+#if defined(PERL_IS_GCC) /* && __GNUC__ < XXX */ || (defined(__clang__) && defined(__s390x__))
 #  define BROKEN_FLT_ROUNDS
 #endif
 
@@ -3437,24 +3437,11 @@ void
 strxfrm(src)
 	SV *		src
     CODE:
-	{
-          STRLEN srclen;
-          STRLEN dstlen;
-          STRLEN buflen;
-          char *p = SvPV(src,srclen);
-          srclen++;
-          buflen = srclen * 4 + 1;
-          ST(0) = sv_2mortal(newSV(buflen));
-          dstlen = strxfrm(SvPVX(ST(0)), p, (size_t)buflen);
-          if (dstlen >= buflen) {
-              dstlen++;
-              SvGROW(ST(0), dstlen);
-              strxfrm(SvPVX(ST(0)), p, (size_t)dstlen);
-              dstlen--;
-          }
-          SvCUR_set(ST(0), dstlen);
-	    SvPOK_only(ST(0));
-	}
+#ifdef USE_LOCALE_COLLATE
+      ST(0) = Perl_strxfrm(aTHX_ src);
+#else
+      ST(0) = src;
+#endif
 
 SysRet
 mkfifo(filename, mode)

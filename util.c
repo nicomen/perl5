@@ -2382,23 +2382,19 @@ S_ckwarn_common(pTHX_ U32 w)
     return FALSE;
 }
 
-/* Set buffer=NULL to get a new one.  */
-STRLEN *
-Perl_new_warnings_bitfield(pTHX_ STRLEN *buffer, const char *const bits,
+char *
+Perl_new_warnings_bitfield(pTHX_ char *buffer, const char *const bits,
                            STRLEN size) {
-    const MEM_SIZE len_wanted =
-        sizeof(STRLEN) + (size > WARNsize ? size : WARNsize);
+    const MEM_SIZE len_wanted = (size > WARNsize ? size : WARNsize);
     PERL_UNUSED_CONTEXT;
     PERL_ARGS_ASSERT_NEW_WARNINGS_BITFIELD;
 
-    buffer = (STRLEN*)
-        (specialWARN(buffer) ?
-         PerlMemShared_malloc(len_wanted) :
-         PerlMemShared_realloc(buffer, len_wanted));
-    buffer[0] = size;
-    Copy(bits, (buffer + 1), size, char);
+    /* pass in null as the source string as we will do the
+     * copy ourselves. */
+    buffer = rcpv_new(NULL, len_wanted, RCPVf_NO_COPY);
+    Copy(bits, buffer, size, char);
     if (size < WARNsize)
-        Zero((char *)(buffer + 1) + size, WARNsize - size, char);
+        Zero(buffer + size, WARNsize - size, char);
     return buffer;
 }
 
@@ -3740,6 +3736,9 @@ Perl_set_context(void *t)
             Perl_croak_nocontext("panic: pthread_setspecific, error=%d", error);
     }
 #  endif
+
+    PERL_SET_NON_tTHX_CONTEXT(t);
+
 #else
     PERL_UNUSED_ARG(t);
 #endif
@@ -5936,7 +5935,7 @@ S_gv_has_usable_name(pTHX_ GV *gv)
 {
     GV **gvp;
     return GvSTASH(gv)
-        && HvENAME(GvSTASH(gv))
+        && HvHasENAME(GvSTASH(gv))
         && (gvp = (GV **)hv_fetchhek(
                         GvSTASH(gv), GvNAME_HEK(gv), 0
            ))

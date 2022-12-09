@@ -324,6 +324,26 @@ Perl_save_generic_svref(pTHX_ SV **sptr)
     save_pushptrptr(sptr, SvREFCNT_inc(*sptr), SAVEt_GENERIC_SVREF);
 }
 
+
+/*
+=for apidoc save_rcpv_free
+
+Implements C<SAVERCPVFREE>.
+
+Saves and restores a refcounted string, similar to what
+save_generic_svref would do for a SV*. Can be used to restore
+a refcounted string to its previous state. Performs the 
+appropriate refcount counting so that nothing should leak
+or be prematurel freed.
+
+=cut
+ */
+void
+Perl_save_rcpv_free(pTHX_ char **ppv) {
+    PERL_ARGS_ASSERT_SAVE_RCPV_FREE;
+    save_pushptrptr(ppv, rcpv_copy(*ppv), SAVEt_RCPV_FREE);
+}
+
 /*
 =for apidoc_section $callback
 =for apidoc save_generic_pvref
@@ -431,7 +451,7 @@ Perl_save_gp(pTHX_ GV *gv, I32 empty)
         HV * const stash = GvSTASH(gv);
         bool isa_changed = 0;
 
-        if (stash && HvENAME(stash)) {
+        if (stash && HvHasENAME(stash)) {
             if (memEQs(GvNAME(gv), GvNAMELEN(gv), "ISA"))
                 isa_changed = TRUE;
             else if (GvCVu(gv))
@@ -725,6 +745,7 @@ Perl_save_clearsv(pTHX_ SV **svp)
     PERL_ARGS_ASSERT_SAVE_CLEARSV;
 
     ASSERT_CURPAD_ACTIVE("save_clearsv");
+    assert(*svp);
     SvPADSTALE_off(*svp); /* mark lexical as active */
     if (UNLIKELY((offset_shifted >> SAVE_TIGHT_SHIFT) != offset)) {
         Perl_croak(aTHX_ "panic: pad offset %" UVuf " out of range (%p-%p)",
@@ -993,10 +1014,10 @@ function.
 =cut
 */
 
-I32
-Perl_save_alloc(pTHX_ I32 size, I32 pad)
+SSize_t
+Perl_save_alloc(pTHX_ SSize_t size, I32 pad)
 {
-    const I32 start = pad + ((char*)&PL_savestack[PL_savestack_ix]
+    const SSize_t start = pad + ((char*)&PL_savestack[PL_savestack_ix]
                           - (char*)PL_savestack);
     const UV elems = 1 + ((size + pad - 1) / sizeof(*PL_savestack));
     const UV elems_shifted = elems << SAVE_TIGHT_SHIFT;
@@ -1013,65 +1034,6 @@ Perl_save_alloc(pTHX_ I32 size, I32 pad)
     return start;
 }
 
-
-static const U8 arg_counts[] = {
-    0, /* SAVEt_ALLOC              */
-    0, /* SAVEt_CLEARPADRANGE      */
-    0, /* SAVEt_CLEARSV            */
-    0, /* SAVEt_REGCONTEXT         */
-    1, /* SAVEt_TMPSFLOOR          */
-    1, /* SAVEt_BOOL               */
-    1, /* SAVEt_COMPILE_WARNINGS   */
-    1, /* SAVEt_COMPPAD            */
-    1, /* SAVEt_FREECOPHH          */
-    1, /* SAVEt_FREEOP             */
-    1, /* SAVEt_FREEPV             */
-    1, /* SAVEt_FREESV             */
-    1, /* SAVEt_I16                */
-    1, /* SAVEt_I32_SMALL          */
-    1, /* SAVEt_I8                 */
-    1, /* SAVEt_INT_SMALL          */
-    1, /* SAVEt_MORTALIZESV        */
-    1, /* SAVEt_NSTAB              */
-    1, /* SAVEt_OP                 */
-    1, /* SAVEt_PARSER             */
-    1, /* SAVEt_STACK_POS          */
-    1, /* SAVEt_READONLY_OFF       */
-    1, /* SAVEt_FREEPADNAME        */
-    1, /* SAVEt_STRLEN_SMALL       */
-    2, /* SAVEt_AV                 */
-    2, /* SAVEt_DESTRUCTOR         */
-    2, /* SAVEt_DESTRUCTOR_X       */
-    2, /* SAVEt_GENERIC_PVREF      */
-    2, /* SAVEt_GENERIC_SVREF      */
-    2, /* SAVEt_GP                 */
-    2, /* SAVEt_GVSV               */
-    2, /* SAVEt_HINTS              */
-    2, /* SAVEt_HPTR               */
-    2, /* SAVEt_HV                 */
-    2, /* SAVEt_I32                */
-    2, /* SAVEt_INT                */
-    2, /* SAVEt_ITEM               */
-    2, /* SAVEt_IV                 */
-    2, /* SAVEt_LONG               */
-    2, /* SAVEt_PPTR               */
-    2, /* SAVEt_SAVESWITCHSTACK    */
-    2, /* SAVEt_SHARED_PVREF       */
-    2, /* SAVEt_SPTR               */
-    2, /* SAVEt_STRLEN             */
-    2, /* SAVEt_SV                 */
-    2, /* SAVEt_SVREF              */
-    2, /* SAVEt_VPTR               */
-    2, /* SAVEt_ADELETE            */
-    2, /* SAVEt_APTR               */
-    3, /* SAVEt_HELEM              */
-    3, /* SAVEt_PADSV_AND_MORTALIZE*/
-    3, /* SAVEt_SET_SVFLAGS        */
-    3, /* SAVEt_GVSLOT             */
-    3, /* SAVEt_AELEM              */
-    3, /* SAVEt_DELETE             */
-    3  /* SAVEt_HINTS_HH           */
-};
 
 
 /*
@@ -1108,7 +1070,7 @@ Perl_leave_scope(pTHX_ I32 base)
             ap = &PL_savestack[ix];
             uv = ap->any_uv;
             type = (U8)uv & SAVE_MASK;
-            argcount = arg_counts[type];
+            argcount = leave_scope_arg_counts[type];
             PL_savestack_ix = ix - argcount;
             ap -= argcount;
         }
@@ -1181,6 +1143,7 @@ Perl_leave_scope(pTHX_ I32 base)
             a0.any_svp = &GvSV(a0.any_gv);
             goto restore_svp;
 
+
         case SAVEt_GENERIC_SVREF:		/* generic sv */
             a0 = ap[0]; a1 = ap[1];
         restore_svp:
@@ -1193,12 +1156,22 @@ Perl_leave_scope(pTHX_ I32 base)
             break;
         }
 
+        case SAVEt_RCPV_FREE:           /* like generic sv, but for struct rcpv */
+        {
+            a0 = ap[0]; a1 = ap[1];
+            char *old = *a0.any_pvp;
+            *a0.any_pvp = a1.any_pv;
+            (void)rcpv_free(old);
+            (void)rcpv_free(a1.any_pv);
+            break;
+        }
+
         case SAVEt_GVSLOT:			/* any slot in GV */
         {
             HV * hv;
             a0 = ap[0]; a1 = ap[1]; a2 = ap[2];
             hv = GvSTASH(a0.any_gv);
-            if (hv && HvENAME(hv) && (
+            if (hv && HvHasENAME(hv) && (
                     (a2.any_sv && SvTYPE(a2.any_sv) == SVt_PVCV)
                  || (*a1.any_svp && SvTYPE(*a1.any_svp) == SVt_PVCV)
                ))
@@ -1313,7 +1286,7 @@ Perl_leave_scope(pTHX_ I32 base)
             had_method = cBOOL(GvCVu(a0.any_gv));
             gp_free(a0.any_gv);
             GvGP_set(a0.any_gv, (GP*)a1.any_ptr);
-            if ((hv=GvSTASH(a0.any_gv)) && HvENAME_get(hv)) {
+            if ((hv=GvSTASH(a0.any_gv)) && HvHasENAME(hv)) {
                 if (memEQs(GvNAME(a0.any_gv), GvNAMELEN(a0.any_gv), "ISA"))
                     mro_isa_changed_in(hv);
                 else if (had_method || GvCVu(a0.any_gv))
@@ -1666,8 +1639,19 @@ Perl_leave_scope(pTHX_ I32 base)
             break;
 
         case SAVEt_COMPILE_WARNINGS:
+            /* NOTE: we can't put &PL_compiling or PL_curcop on the save
+             *       stack directly, as we currently cannot translate
+             *       them to the correct addresses after a thread start
+             *       or win32 fork start. - Yves
+             */
             a0 = ap[0];
-        free_and_set_cop_warnings(&PL_compiling, (STRLEN*) a0.any_ptr);
+            free_and_set_cop_warnings(&PL_compiling, a0.any_pv);
+            break;
+
+        case SAVEt_CURCOP_WARNINGS:
+            /* NOTE: see comment above about SAVEt_COMPILE_WARNINGS */
+            a0 = ap[0];
+            free_and_set_cop_warnings(PL_curcop, a0.any_pv);
             break;
 
         case SAVEt_PARSER:

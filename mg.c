@@ -87,7 +87,7 @@ struct magic_state {
 /* MGS is typedef'ed to struct magic_state in perl.h */
 
 STATIC void
-S_save_magic_flags(pTHX_ I32 mgs_ix, SV *sv, U32 flags)
+S_save_magic_flags(pTHX_ SSize_t mgs_ix, SV *sv, U32 flags)
 {
     MGS* mgs;
     bool bumped = FALSE;
@@ -165,7 +165,7 @@ be >= C<SVt_PVMG>.  See C<L</sv_magic>>.
 int
 Perl_mg_get(pTHX_ SV *sv)
 {
-    const I32 mgs_ix = SSNEW(sizeof(MGS));
+    const SSize_t mgs_ix = SSNEW(sizeof(MGS));
     bool saved = FALSE;
     bool have_new = 0;
     bool taint_only = TRUE; /* the only get method seen is taint */
@@ -269,7 +269,7 @@ Do magic after a value is assigned to the SV.  See C<L</sv_magic>>.
 int
 Perl_mg_set(pTHX_ SV *sv)
 {
-    const I32 mgs_ix = SSNEW(sizeof(MGS));
+    const SSize_t mgs_ix = SSNEW(sizeof(MGS));
     MAGIC* mg;
     MAGIC* nextmg;
 
@@ -307,7 +307,7 @@ Perl_mg_size(pTHX_ SV *sv)
     for (mg = SvMAGIC(sv); mg; mg = mg->mg_moremagic) {
         const MGVTBL* const vtbl = mg->mg_virtual;
         if (vtbl && vtbl->svt_len) {
-            const I32 mgs_ix = SSNEW(sizeof(MGS));
+            const SSize_t mgs_ix = SSNEW(sizeof(MGS));
             I32 len;
             save_magic(mgs_ix, sv);
             /* omit MGf_GSKIP -- not changed here */
@@ -340,7 +340,7 @@ Clear something magical that the SV represents.  See C<L</sv_magic>>.
 int
 Perl_mg_clear(pTHX_ SV *sv)
 {
-    const I32 mgs_ix = SSNEW(sizeof(MGS));
+    const SSize_t mgs_ix = SSNEW(sizeof(MGS));
     MAGIC* mg;
     MAGIC *nextmg;
 
@@ -1082,8 +1082,8 @@ Perl_magic_get(pTHX_ SV *sv, MAGIC *mg)
                 sv_setpvn(sv, WARN_ALLstring, WARNsize);
             }
             else {
-                sv_setpvn(sv, (char *) (PL_compiling.cop_warnings + 1),
-                          *PL_compiling.cop_warnings);
+                sv_setpvn(sv, PL_compiling.cop_warnings,
+                        RCPV_LEN(PL_compiling.cop_warnings));
             }
         }
         break;
@@ -1858,7 +1858,7 @@ Perl_magic_clearisa(pTHX_ SV *sv, MAGIC *mg)
         I32 items = AvFILLp((AV *)mg->mg_obj) + 1;
         while (items--) {
             stash = GvSTASH((GV *)*svp++);
-            if (stash && HvENAME(stash)) mro_isa_changed_in(stash);
+            if (stash && HvHasENAME(stash)) mro_isa_changed_in(stash);
         }
 
         return 0;
@@ -1870,7 +1870,7 @@ Perl_magic_clearisa(pTHX_ SV *sv, MAGIC *mg)
 
     /* The stash may have been detached from the symbol table, so check its
        name before doing anything. */
-    if (stash && HvENAME_get(stash))
+    if (stash && HvHasENAME(stash))
         mro_isa_changed_in(stash);
 
     return 0;
@@ -3012,7 +3012,7 @@ Perl_magic_set(pTHX_ SV *sv, MAGIC *mg)
         else if (strEQ(mg->mg_ptr+1, "ARNING_BITS")) {
             if ( ! (PL_dowarn & G_WARN_ALL_MASK)) {
                 if (!SvPOK(sv)) {
-            free_and_set_cop_warnings(&PL_compiling, pWARN_STD);
+                    free_and_set_cop_warnings(&PL_compiling, pWARN_STD);
                     break;
                 }
                 {
@@ -3024,23 +3024,24 @@ Perl_magic_set(pTHX_ SV *sv, MAGIC *mg)
                         not_all |= ptr[i] ^ 0x55;
                     }
                     if (!not_none) {
-                free_and_set_cop_warnings(&PL_compiling, pWARN_NONE);
+                        free_and_set_cop_warnings(&PL_compiling, pWARN_NONE);
                     } else if (len >= WARNsize && !not_all) {
-                free_and_set_cop_warnings(&PL_compiling, pWARN_ALL);
-                    PL_dowarn |= G_WARN_ONCE ;
-                }
-            else {
-                             STRLEN len;
-                             const char *const p = SvPV_const(sv, len);
+                        free_and_set_cop_warnings(&PL_compiling, pWARN_ALL);
+                        PL_dowarn |= G_WARN_ONCE ;
+                    }
+                    else {
+                        STRLEN len;
+                        const char *const p = SvPV_const(sv, len);
 
-                             PL_compiling.cop_warnings
-                                 = Perl_new_warnings_bitfield(aTHX_ PL_compiling.cop_warnings,
-                                                         p, len);
+                        free_and_set_cop_warnings(
+                            &PL_compiling,
+                            Perl_new_warnings_bitfield(aTHX_ PL_compiling.cop_warnings,
+                                                     p, len)
+                        );
 
-                     if (isWARN_on(PL_compiling.cop_warnings, WARN_ONCE))
+                        if (isWARN_on(PL_compiling.cop_warnings, WARN_ONCE))
                             PL_dowarn |= G_WARN_ONCE ;
-               }
-
+                    }
                 }
             }
         }

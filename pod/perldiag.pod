@@ -455,6 +455,13 @@ This message can be seen quite often with DB_File on systems with "hard"
 dynamic linking, like C<AIX> and C<OS/2>.  It is a bug of C<Berkeley DB>
 which is left unnoticed if C<DB> uses I<forgiving> system malloc().
 
+=item Bad infix plugin result (%zd) - did not consume entire identifier <%s>
+
+(F) A plugin using the C<PL_infix_plugin> mechanism to parse an infix
+keyword consumed part of a named identifier operator name but did not
+consume all of it.  This is not permitted as it leads to fragile parsing
+results.
+
 =item Badly placed ()'s
 
 (A) You've accidentally run your script through B<csh> instead
@@ -4454,6 +4461,14 @@ and you mentioned a variable that starts with 0 that has more than one
 digit. You probably want to remove the leading 0, or if the intent was
 to express a variable name in octal you should convert to decimal.
 
+=item Object with arguments in @INC does not support a hook method
+
+(F) You pushed an array reference hook into C<@INC> which has an object
+as the first argument, but the object doesn't support any known hooks.
+Since you used the array form of creating a hook, you should have supplied
+an object that supports either the C<INC> or C<INCDIR> methods. You
+could also use a coderef instead of an object.
+
 =item Octal number > 037777777777 non-portable
 
 (W portable) The octal number you specified is larger than 2**32-1
@@ -6786,6 +6801,21 @@ available on your platform), including surrogates.  But these can cause
 problems when being input or output, which is likely where this message
 came from.  If you really really know what you are doing you can turn
 off this warning by C<no warnings 'surrogate';>.
+
+=item Unimplemented
+
+(F) In Perl 5.12 and above, you have executed an
+L<ellipsis statement|perlsyn/"The Ellipsis Statement">.  This is a
+bare C<...;>, meant to be used to allow you to outline code that
+is to be written, but is not complete, similar to the following:
+
+    sub not_done_yet {
+      my($self, $arg1, $arg2) = @_;
+      ...
+    }
+
+If C<not_done_yet()> is called, Perl will die with an C<Unimplemented> error
+at the line containing C<...>.
 
 =item Unknown charname '%s'
 

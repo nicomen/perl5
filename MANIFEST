@@ -1458,31 +1458,23 @@ cpan/Memoize/Memoize/Expire.pm		Memoize expiry manager example
 cpan/Memoize/Memoize/NDBM_File.pm	Memoize glue layer for NDBM_File
 cpan/Memoize/Memoize/SDBM_File.pm	Memoize glue layer for SDBM_File
 cpan/Memoize/Memoize/Storable.pm	Memoize glue layer for Storable
-cpan/Memoize/t/array.t			Memoize array context return tests
-cpan/Memoize/t/array_confusion.t	Memoize ambiguous array return tests
+cpan/Memoize/t/basic.t
+cpan/Memoize/t/cache.t
 cpan/Memoize/t/correctness.t		Memoize basic correctness tests
-cpan/Memoize/t/errors.t			Memoize PEBKAC detection tests
-cpan/Memoize/t/expfile.t		Memoize expiry manager tests
-cpan/Memoize/t/expire.t			Memoize expiry manager tests
 cpan/Memoize/t/expmod.t
-cpan/Memoize/t/expmod_n.t		Memoize expiry manager tests
 cpan/Memoize/t/expmod_t.t		Memoize expiry manager (timed) tests
 cpan/Memoize/t/flush.t			Memoize 'flush_cache' function tests
-cpan/Memoize/t/lib/ExpireFile.pm
-cpan/Memoize/t/lib/ExpireTest.pm
-cpan/Memoize/t/merge.t
+cpan/Memoize/t/lib/DBMTest.pm
 cpan/Memoize/t/normalize.t		Memoize 'normalizer' feature tests
-cpan/Memoize/t/prototype.t		Memoize prototyped function handling tests
-cpan/Memoize/t/rememoize.t
-cpan/Memoize/t/speed.t			"Makes functions faster" advertisement test
 cpan/Memoize/t/st_concurrency
 cpan/Memoize/t/threadsafe.t
 cpan/Memoize/t/tie.t			Memoize tied file test
+cpan/Memoize/t/tie_db.t
 cpan/Memoize/t/tie_gdbm.t		Memoize GDBM interface test
 cpan/Memoize/t/tie_ndbm.t		Memoize NDBM interface test
+cpan/Memoize/t/tie_odbm.t
 cpan/Memoize/t/tie_sdbm.t		Memoize SDBM interface test
 cpan/Memoize/t/tie_storable.t		Memoize Storable interface test
-cpan/Memoize/t/tiefeatures.t		Memoize FAULT / MERGE / HASH options test
 cpan/Memoize/t/unmemoize.t		Memoize 'unmemoize' function test
 cpan/MIME-Base64/Base64.xs		MIME::Base64 extension
 cpan/MIME-Base64/lib/MIME/Base64.pm
@@ -1846,6 +1838,7 @@ cpan/Pod-Usage/t/pod/testcmp.pl
 cpan/Pod-Usage/t/pod/testp2pt.pl
 cpan/Pod-Usage/t/pod/usage.pod
 cpan/Pod-Usage/t/pod/usage2.pod
+cpan/podlators/docs/docknot.yaml
 cpan/podlators/lib/Pod/Man.pm			Convert POD data to *roff
 cpan/podlators/lib/Pod/ParseLink.pm		Perl an L<> formatting code in POD text
 cpan/podlators/lib/Pod/Text.pm			Pod-Parser - convert POD data to formatted ASCII text
@@ -1861,7 +1854,12 @@ cpan/podlators/t/data/basic.man			podlators test
 cpan/podlators/t/data/basic.ovr			podlators test
 cpan/podlators/t/data/basic.pod			podlators test
 cpan/podlators/t/data/basic.txt			podlators test
+cpan/podlators/t/data/man/encoding.groff
+cpan/podlators/t/data/man/encoding.pod
+cpan/podlators/t/data/man/encoding.roff
+cpan/podlators/t/data/man/encoding.utf8
 cpan/podlators/t/data/perl.conf			podlators test
+cpan/podlators/t/data/regenerate-data
 cpan/podlators/t/data/snippets/color/escape-wrapping
 cpan/podlators/t/data/snippets/color/tag-width
 cpan/podlators/t/data/snippets/color/tag-wrapping
@@ -1885,9 +1883,19 @@ cpan/podlators/t/data/snippets/man/eth
 cpan/podlators/t/data/snippets/man/fixed-font
 cpan/podlators/t/data/snippets/man/fixed-font-in-item
 cpan/podlators/t/data/snippets/man/for-blocks
+cpan/podlators/t/data/snippets/man/guesswork
+cpan/podlators/t/data/snippets/man/guesswork-all
+cpan/podlators/t/data/snippets/man/guesswork-no-quoting
+cpan/podlators/t/data/snippets/man/guesswork-none
+cpan/podlators/t/data/snippets/man/guesswork-partial
+cpan/podlators/t/data/snippets/man/guesswork-quoting
 cpan/podlators/t/data/snippets/man/hyphen-in-s
 cpan/podlators/t/data/snippets/man/iso-8859-1
+cpan/podlators/t/data/snippets/man/iso-8859-1-error-die
+cpan/podlators/t/data/snippets/man/iso-8859-1-error-pod
+cpan/podlators/t/data/snippets/man/iso-8859-1-roff
 cpan/podlators/t/data/snippets/man/item-fonts
+cpan/podlators/t/data/snippets/man/language
 cpan/podlators/t/data/snippets/man/link-quoting
 cpan/podlators/t/data/snippets/man/link-to-url
 cpan/podlators/t/data/snippets/man/long-quote
@@ -1895,29 +1903,32 @@ cpan/podlators/t/data/snippets/man/lquote-and-quote
 cpan/podlators/t/data/snippets/man/lquote-rquote
 cpan/podlators/t/data/snippets/man/markup-in-name
 cpan/podlators/t/data/snippets/man/multiline-x
+cpan/podlators/t/data/snippets/man/naive
+cpan/podlators/t/data/snippets/man/naive-groff
 cpan/podlators/t/data/snippets/man/name-guesswork
+cpan/podlators/t/data/snippets/man/name-quotes
+cpan/podlators/t/data/snippets/man/name-quotes-none
 cpan/podlators/t/data/snippets/man/nested-lists
 cpan/podlators/t/data/snippets/man/newlines-in-c
 cpan/podlators/t/data/snippets/man/non-ascii
+cpan/podlators/t/data/snippets/man/nonbreaking-space-l
 cpan/podlators/t/data/snippets/man/not-bullet
 cpan/podlators/t/data/snippets/man/not-numbers
 cpan/podlators/t/data/snippets/man/nourls
-cpan/podlators/t/data/snippets/man/paired-quotes
 cpan/podlators/t/data/snippets/man/periods
 cpan/podlators/t/data/snippets/man/quote-escaping
 cpan/podlators/t/data/snippets/man/rquote-none
-cpan/podlators/t/data/snippets/man/small-caps-magic
 cpan/podlators/t/data/snippets/man/soft-hyphens
 cpan/podlators/t/data/snippets/man/trailing-space
 cpan/podlators/t/data/snippets/man/true-false
-cpan/podlators/t/data/snippets/man/uppercase-license
 cpan/podlators/t/data/snippets/man/utf8-nonbreaking
 cpan/podlators/t/data/snippets/man/utf8-verbatim
 cpan/podlators/t/data/snippets/man/x-whitespace
 cpan/podlators/t/data/snippets/man/x-whitespace-entry
+cpan/podlators/t/data/snippets/man/zero-width-space
 cpan/podlators/t/data/snippets/overstrike/tag-width
 cpan/podlators/t/data/snippets/overstrike/wrapping
-cpan/podlators/t/data/snippets/README			podlators test
+cpan/podlators/t/data/snippets/README.md
 cpan/podlators/t/data/snippets/termcap/escape-wrapping
 cpan/podlators/t/data/snippets/termcap/tag-width
 cpan/podlators/t/data/snippets/termcap/tag-wrapping
@@ -1937,11 +1948,19 @@ cpan/podlators/t/data/snippets/text/error-stderr
 cpan/podlators/t/data/snippets/text/error-stderr-opt
 cpan/podlators/t/data/snippets/text/for
 cpan/podlators/t/data/snippets/text/iso-8859-1
+cpan/podlators/t/data/snippets/text/iso-8859-1-error-die
+cpan/podlators/t/data/snippets/text/iso-8859-1-error-pod
+cpan/podlators/t/data/snippets/text/iso-8859-1-utf8
 cpan/podlators/t/data/snippets/text/late-encoding
 cpan/podlators/t/data/snippets/text/link-rt
 cpan/podlators/t/data/snippets/text/link-url
 cpan/podlators/t/data/snippets/text/margin
+cpan/podlators/t/data/snippets/text/naive
+cpan/podlators/t/data/snippets/text/name-quotes
+cpan/podlators/t/data/snippets/text/name-quotes-none
+cpan/podlators/t/data/snippets/text/non-latin
 cpan/podlators/t/data/snippets/text/nonbreaking-space
+cpan/podlators/t/data/snippets/text/nonbreaking-space-l
 cpan/podlators/t/data/snippets/text/nourls
 cpan/podlators/t/data/snippets/text/periods
 cpan/podlators/t/data/snippets/text/quotes-opt
@@ -1951,6 +1970,7 @@ cpan/podlators/t/data/snippets/text/utf8
 cpan/podlators/t/data/snippets/text/utf8-iso
 cpan/podlators/t/data/snippets/text/verbatim
 cpan/podlators/t/data/termcap			podlators test
+cpan/podlators/t/docs/changes.t
 cpan/podlators/t/docs/pod.t			podlators test
 cpan/podlators/t/docs/pod-spelling.t			podlators test
 cpan/podlators/t/docs/spdx-license.t			podlators test
@@ -1965,6 +1985,7 @@ cpan/podlators/t/lib/Test/RRA/ModuleVersion.pm		podlators test
 cpan/podlators/t/man/devise-date.t			podlators test
 cpan/podlators/t/man/devise-title.t			podlators test
 cpan/podlators/t/man/empty.t			podlators test
+cpan/podlators/t/man/encoding.t
 cpan/podlators/t/man/heading.t			podlators test
 cpan/podlators/t/man/iso-8859-1.t		podlators test
 cpan/podlators/t/man/no-encode.t		podlators test
@@ -3711,11 +3732,15 @@ dist/ExtUtils-ParseXS/t/lib/PrimitiveCapture.pm			Primitive STDOUT/ERR capturing
 dist/ExtUtils-ParseXS/t/lib/TypemapTest/Foo.pm			ExtUtils::Typemaps tests
 dist/ExtUtils-ParseXS/t/pseudotypemap1				A test-typemap
 dist/ExtUtils-ParseXS/t/typemap					Standard typemap for controlled testing
+dist/ExtUtils-ParseXS/t/XSAlias.xs				Test file for ExtUtils::ParseXS ALIAS tests
 dist/ExtUtils-ParseXS/t/XSBroken.xs				Test file for ExtUtils::ParseXS tests
+dist/ExtUtils-ParseXS/t/XSFalsePositive.xs			Test file for ExtUtils::ParseXS tests
+dist/ExtUtils-ParseXS/t/XSFalsePositive2.xs			Test file for ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSInclude.xsh				Test file for ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSMore.xs				Test file for ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSTest.pm				Test file for ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSTest.xs				Test file for ExtUtils::ParseXS tests
+dist/ExtUtils-ParseXS/t/XSTightDirectives.xs			Test file for ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSUsage.pm				ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSUsage.xs				ExtUtils::ParseXS tests
 dist/ExtUtils-ParseXS/t/XSWarn.xs				ExtUtils::ParseXS tests
@@ -4402,7 +4427,6 @@ ext/Pod-Html/corpus/perlvar-copy.pod
 ext/Pod-Html/lib/Pod/Html.pm	Convert POD data to HTML
 ext/Pod-Html/lib/Pod/Html/Util.pm	Helper functions for Pod-Html
 ext/Pod-Html/t/anchorify.t
-ext/Pod-Html/t/anchorify-536.t	Test Pod-Html utility functions during perl-5.36
 ext/Pod-Html/t/cache.pod
 ext/Pod-Html/t/cache.t
 ext/Pod-Html/t/crossref.pod
@@ -5279,6 +5303,8 @@ pod/perl5371delta.pod		Perl changes in version 5.37.1
 pod/perl5372delta.pod		Perl changes in version 5.37.2
 pod/perl5373delta.pod		Perl changes in version 5.37.3
 pod/perl5374delta.pod		Perl changes in version 5.37.4
+pod/perl5375delta.pod		Perl changes in version 5.37.5
+pod/perl5376delta.pod		Perl changes in version 5.37.6
 pod/perl561delta.pod		Perl changes in version 5.6.1
 pod/perl56delta.pod		Perl changes in version 5.6
 pod/perl581delta.pod		Perl changes in version 5.8.1
@@ -5516,6 +5542,11 @@ regcharclass.h			Generated by regen/regcharclass.pl
 regcomp.c			Regular expression compiler
 regcomp.h			Private declarations for above
 regcomp.sym			Data for regnodes.h
+regcomp_debug.c			Regular expression compiler debug code
+regcomp_internal.h		Internal stuff for regex compiler
+regcomp_invlist.c		Invlist logic for regular expresion engine
+regcomp_study.c			Optimizer for regular expresion compiler
+regcomp_trie.c			Trie logic for regular expresion compiler
 regen.pl			Run all scripts that (re)generate files
 regen/charset_translations.pl	Character set utilities
 regen/ebcdic.pl			Generates ebcdic_tables.h
@@ -5539,6 +5570,7 @@ regen/regcharclass.pl		Generate regcharclass.h from inline data
 regen/regcharclass_multi_char_folds.pl	Generate input for regcharclass.pl
 regen/regcomp.pl		Builder of regnodes.h
 regen/regen_lib.pl		Common file routines for generator scripts
+regen/scope_types.pl		Regenerate scope_types.h
 regen/uconfig_h.pl		generate uconfig.h (requires /bin/sh)
 regen/unicode_constants.pl	generate unicode_constants.h
 regen/warnings.pl		Program to write warnings.h and lib/warnings.pm
@@ -5552,6 +5584,7 @@ runtests.SH			A script that generates runtests
 sbox32_hash.h			SBox hash code (32 Bit SBOX based hash function)
 scope.c				Scope entry and exit code
 scope.h				Scope entry and exit header
+scope_types.h			Types used to manage the save stack
 SECURITY.md			Add Security Policy for GitHub
 sv.c				Scalar value code
 sv.h				Scalar value header
@@ -5676,6 +5709,7 @@ t/lib/Devel/nodb.pm		Module for t/run/switchd.t
 t/lib/Devel/switchd.pm		Module for t/run/switchd.t
 t/lib/Devel/switchd_empty.pm	Module for t/run/switchd.t
 t/lib/Devel/switchd_goto.pm	Module for t/run/switchd.t
+t/lib/Dies.pm			For test case in op/require_errors.t
 t/lib/feature/api		Test API for checking features enabled/disabled
 t/lib/feature/bareword_filehandles	Tests for enabling/disabling bareword_filehandles feature
 t/lib/feature/bits		Tests for feature bit handling
@@ -5972,6 +6006,7 @@ t/op/ref.t			See if refs and objects work
 t/op/repeat.t			See if x operator works
 t/op/require_37033.t		See if require always closes rsfp
 t/op/require_errors.t		See if errors from require are reported correctly
+t/op/require_gh20577.t		Make sure updating %INC from an INC hook doesnt break @INC
 t/op/require_override.t		See if require handles no argument properly
 t/op/reset.t			See if reset operator works
 t/op/reverse.t			See if reverse operator works

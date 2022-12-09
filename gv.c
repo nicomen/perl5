@@ -206,9 +206,6 @@ Perl_newGP(pTHX_ GV *const gv)
     U32 hash;
     const char *file;
     STRLEN len;
-#ifndef USE_ITHREADS
-    GV *filegv;
-#endif
 
     PERL_ARGS_ASSERT_NEWGP;
     Newxz(gp, 1, GP);
@@ -222,19 +219,13 @@ Perl_newGP(pTHX_ GV *const gv)
        frees INIT before looking up DESTROY (and creating *DESTROY)
     */
     if (PL_curcop) {
+        char *tmp= CopFILE(PL_curcop);
         gp->gp_line = CopLINE(PL_curcop); /* 0 otherwise Newxz */
-#ifdef USE_ITHREADS
-        if (CopFILE(PL_curcop)) {
-            file = CopFILE(PL_curcop);
-            len = strlen(file);
+
+        if (tmp) {
+            file = tmp;
+            len = CopFILE_LEN(PL_curcop);
         }
-#else
-        filegv = CopFILEGV(PL_curcop);
-        if (filegv) {
-            file = GvNAME(filegv)+2;
-            len = GvNAMELEN(filegv)-2;
-        }
-#endif
         else goto no_file;
     }
     else {
@@ -983,7 +974,7 @@ S_gv_fetchmeth_internal(pTHX_ HV* stash, SV* meth, const char* name, STRLEN len,
         }
     }
 
-    if (topgv && GvREFCNT(topgv) == 1) {
+    if (topgv && GvREFCNT(topgv) == 1 && !(flags & GV_NOUNIVERSAL)) {
         /* cache the fact that the method is not defined */
         GvCVGEN(topgv) = topgen_cmp;
     }
@@ -1637,7 +1628,7 @@ S_gv_stashpvn_internal(pTHX_ const char *name, U32 namelen, I32 flags)
     stash = GvHV(tmpgv);
     if (!(flags & ~GV_NOADD_MASK) && !stash) return NULL;
     assert(stash);
-    if (!HvNAME_get(stash)) {
+    if (!HvHasNAME(stash)) {
         hv_name_set(stash, name, namelen, flags & SVf_UTF8 ? SVf_UTF8 : 0 );
 
         /* FIXME: This is a repeat of logic in gv_fetchpvn_flags */
@@ -1843,7 +1834,7 @@ S_parse_gv_stash_name(pTHX_ HV **stash, GV **gv, const char **name,
 
                 if (!(*stash = GvHV(*gv))) {
                     *stash = GvHV(*gv) = newHV();
-                    if (!HvNAME_get(*stash)) {
+                    if (!HvHasNAME(*stash)) {
                         if (GvSTASH(*gv) == PL_defstash && *len == 6
                             && strBEGINs(*name, "CORE"))
                             hv_name_sets(*stash, "CORE", 0);
@@ -1857,7 +1848,7 @@ S_parse_gv_stash_name(pTHX_ HV **stash, GV **gv, const char **name,
                         mro_package_moved(*stash, NULL, *gv, 1);
                     }
                 }
-                else if (!HvNAME_get(*stash))
+                else if (!HvHasNAME(*stash))
                     hv_name_set(*stash, nambeg, name_cursor - nambeg, is_utf8);
             }
 
@@ -2804,9 +2795,11 @@ Perl_gv_check(pTHX_ HV *stash)
                 if (SvTYPE(gv) != SVt_PVGV || GvMULTI(gv))
                     continue;
                 file = GvFILE(gv);
+                assert(PL_curcop == &PL_compiling);
                 CopLINE_set(PL_curcop, GvLINE(gv));
 #ifdef USE_ITHREADS
-                CopFILE(PL_curcop) = (char *)file;	/* set for warning */
+                SAVECOPFILE_FREE(PL_curcop);
+                CopFILE_set(PL_curcop, (char *)file);	/* set for warning */
 #else
                 CopFILEGV(PL_curcop)
                     = gv_fetchfile_flags(file, HEK_LEN(GvFILE_HEK(gv)), 0);
@@ -3305,7 +3298,7 @@ Perl_gv_handler(pTHX_ HV *stash, I32 id)
     U32 newgen;
     struct mro_meta* stash_meta;
 
-    if (!stash || !HvNAME_get(stash))
+    if (!stash || !HvHasNAME(stash))
         return NULL;
 
     stash_meta = HvMROMETA(stash);

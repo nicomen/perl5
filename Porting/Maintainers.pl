@@ -230,7 +230,7 @@ use File::Glob qw(:case);
     },
 
     'Config::Perl::V' => {
-        'DISTRIBUTION' => 'HMBRAND/Config-Perl-V-0.33.tgz',
+        'DISTRIBUTION' => 'HMBRAND/Config-Perl-V-0.34.tgz',
         'FILES'        => q[cpan/Config-Perl-V],
         'EXCLUDED'     => [qw(
 		examples/show-v.pl
@@ -413,7 +413,7 @@ use File::Glob qw(:case);
     },
 
     'experimental' => {
-        'DISTRIBUTION' => 'LEONT/experimental-0.028.tar.gz',
+        'DISTRIBUTION' => 'LEONT/experimental-0.029.tar.gz',
         'FILES'        => q[cpan/experimental],
         'EXCLUDED'     => [qr{^xt/}],
     },
@@ -487,7 +487,7 @@ use File::Glob qw(:case);
     },
 
     'ExtUtils::PL2Bat' => {
-        'DISTRIBUTION' => 'LEONT/ExtUtils-PL2Bat-0.004.tar.gz',
+        'DISTRIBUTION' => 'LEONT/ExtUtils-PL2Bat-0.005.tar.gz',
         'FILES'        => q[cpan/ExtUtils-PL2Bat],
         'EXCLUDED'     => [
             't/00-compile.t',
@@ -595,7 +595,7 @@ use File::Glob qw(:case);
     },
 
     'Getopt::Long' => {
-        'DISTRIBUTION' => 'JV/Getopt-Long-2.52.tar.gz',
+        'DISTRIBUTION' => 'JV/Getopt-Long-2.54.tar.gz',
         'FILES'        => q[cpan/Getopt-Long],
         'EXCLUDED'     => [
             qr{^examples/},
@@ -731,7 +731,7 @@ use File::Glob qw(:case);
     },
 
     'Locale::Maketext' => {
-        'DISTRIBUTION' => 'TODDR/Locale-Maketext-1.31.tar.gz',
+        'DISTRIBUTION' => 'TODDR/Locale-Maketext-1.32.tar.gz',
         'FILES'        => q[dist/Locale-Maketext],
         'EXCLUDED'     => [
             qw(
@@ -815,9 +815,9 @@ use File::Glob qw(:case);
     },
 
     'Memoize' => {
-        'DISTRIBUTION' => 'ARISTOTLE/Memoize-1.10.tar.gz',
+        'DISTRIBUTION' => 'ARISTOTLE/Memoize-1.15.tar.gz',
         'FILES'        => q[cpan/Memoize],
-        'EXCLUDED'     => ['article.html'],
+        'EXCLUDED'     => [ qr{^inc/}, 'article.html' ],
     },
 
     'MIME::Base64' => {
@@ -827,7 +827,7 @@ use File::Glob qw(:case);
     },
 
     'Module::CoreList' => {
-        'DISTRIBUTION' => 'BINGOS/Module-CoreList-5.20220920.tar.gz',
+        'DISTRIBUTION' => 'BINGOS/Module-CoreList-5.20221120.tar.gz',
         'FILES'        => q[dist/Module-CoreList],
     },
 
@@ -858,7 +858,7 @@ use File::Glob qw(:case);
     },
 
     'Net::Ping' => {
-        'DISTRIBUTION' => 'RURBAN/Net-Ping-2.74.tar.gz',
+        'DISTRIBUTION' => 'RURBAN/Net-Ping-2.75.tar.gz',
         'FILES'        => q[dist/Net-Ping],
         'EXCLUDED'     => [
             qr{^\.[awc]},
@@ -896,7 +896,7 @@ use File::Glob qw(:case);
     },
 
     'parent' => {
-        'DISTRIBUTION' => 'CORION/parent-0.238.tar.gz',
+        'DISTRIBUTION' => 'CORION/parent-0.239.tar.gz',
         'FILES'        => q[cpan/parent],
         'EXCLUDED'     => [
             qr{^xt}
@@ -983,19 +983,11 @@ use File::Glob qw(:case);
     },
 
     'podlators' => {
-        'DISTRIBUTION' => 'RRA/podlators-4.14.tar.gz',
+        'DISTRIBUTION' => 'RRA/podlators-5.00.tar.gz',
         'MAIN_MODULE'  => 'Pod::Man',
         'FILES'        => q[cpan/podlators pod/perlpodstyle.pod],
         'EXCLUDED'     => [
-            qr{^docs/metadata/},
-        ],
-
-        # https://github.com/rra/podlators/pull/15
-        'CUSTOMIZED' => [
-            't/general/basic.t',
-            't/man/empty.t',
-            't/man/no-encode.t',
-            't/text/invalid.t',
+            qr{^\.github/workflows/build\.yaml},
         ],
 
         'MAP' => {

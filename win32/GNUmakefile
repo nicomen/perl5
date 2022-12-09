@@ -63,7 +63,7 @@ INST_TOP := $(INST_DRV)\perl
 # versioned installation can be obtained by setting INST_TOP above to a
 # path that includes an arbitrary version string.
 #
-#INST_VER	:= \5.37.5
+#INST_VER	:= \5.37.7
 
 #
 # Comment this out if you DON'T want your perl installation to have
@@ -941,6 +941,10 @@ NOOP		= @rem
 MICROCORE_SRC	=		\
 		..\toke.c	\
 		..\regcomp.c	\
+		..\regcomp_trie.c	\
+		..\regcomp_debug.c	\
+		..\regcomp_invlist.c	\
+		..\regcomp_study.c	\
 		..\regexec.c	\
 		..\op.c		\
 		..\sv.c		\
@@ -1017,6 +1021,7 @@ CORE_NOCFG_H	=		\
 		..\pp.h		\
 		..\proto.h	\
 		..\regcomp.h	\
+		..\regcomp_internal.h	\
 		..\regexp.h	\
 		..\scope.h	\
 		..\sv.h		\
@@ -1154,7 +1159,15 @@ ifeq ($(CCTYPE),)
 endif
 
 
-..\regcomp$(o) : ..\regnodes.h ..\regcharclass.h
+..\regcomp$(o) : ..\regcomp.h ..\regcomp_internal.h ..\regnodes.h ..\regcharclass.h
+
+..\regcomp_debug$(o) : ..\regcomp.h ..\regcomp_internal.h ..\regnodes.h ..\regcharclass.h
+
+..\regcomp_invlist$(o) : ..\regcomp.h ..\regcomp_internal.h ..\regnodes.h ..\regcharclass.h
+
+..\regcomp_study$(o) : ..\regcomp.h ..\regcomp_internal.h ..\regnodes.h ..\regcharclass.h
+
+..\regcomp_trie$(o) : ..\regcomp.h ..\regcomp_internal.h ..\regnodes.h ..\regcharclass.h
 
 ..\regexec$(o) : ..\regnodes.h ..\regcharclass.h
 
@@ -1635,7 +1648,7 @@ utils: $(HAVEMINIPERL) ..\utils\Makefile
 	copy ..\README.tw       ..\pod\perltw.pod
 	copy ..\README.vos      ..\pod\perlvos.pod
 	copy ..\README.win32    ..\pod\perlwin32.pod
-	copy ..\pod\perldelta.pod ..\pod\perl5375delta.pod
+	copy ..\pod\perldelta.pod ..\pod\perl5377delta.pod
 	$(MINIPERL) -I..\lib $(PL2BAT) $(UTILS)
 	$(MINIPERL) -I..\lib ..\autodoc.pl ..
 	$(MINIPERL) -I..\lib ..\pod\perlmodlib.PL -q ..
@@ -1734,7 +1747,7 @@ distclean: realclean
 	-if exist $(LIBDIR)\Win32API rmdir /s /q $(LIBDIR)\Win32API
 	-if exist $(LIBDIR)\XS rmdir /s /q $(LIBDIR)\XS
 	-cd $(PODDIR) && del /f *.html *.bat roffitall \
-	    perl5375delta.pod perlaix.pod perlamiga.pod perlandroid.pod \
+	    perl5377delta.pod perlaix.pod perlamiga.pod perlandroid.pod \
 	    perlapi.pod perlbs2000.pod perlcn.pod perlcygwin.pod \
 	    perlfreebsd.pod perlhaiku.pod perlhpux.pod perlhurd.pod \
 	    perlintern.pod perlirix.pod perljp.pod perlko.pod perllinux.pod \
@@ -1819,11 +1832,11 @@ endif
 
 test : test-prep
 	set PERL_STATIC_EXT=$(STATIC_EXT) && \
-	    cd ..\t && perl.exe harness $(TEST_SWITCHES) $(TEST_FILES)
+	    cd ..\t && perl.exe harness $(TEST_ARGS) $(TEST_SWITCHES) $(TEST_FILES)
 
 test_porting : test-prep
 	set PERL_STATIC_EXT=$(STATIC_EXT) && \
-	    cd ..\t && perl.exe harness $(TEST_SWITCHES) porting\*.t ..\lib\diagnostics.t
+	    cd ..\t && perl.exe harness $(TEST_ARGS) $(TEST_SWITCHES) porting\*.t ..\lib\diagnostics.t
 
 test-reonly : reonly utils
 	$(XCOPY) $(PERLEXE) ..\t\$(NULL)
@@ -1837,14 +1850,14 @@ regen :
 test-notty : test-prep
 	set PERL_STATIC_EXT=$(STATIC_EXT) && \
 	    set PERL_SKIP_TTY_TEST=1 && \
-	    cd ..\t && perl.exe harness $(TEST_SWITCHES) $(TEST_FILES)
+	    cd ..\t && perl.exe harness $(TEST_ARGS) $(TEST_SWITCHES) $(TEST_FILES)
 
 _test :
 	$(XCOPY) $(PERLEXE) ..\t\$(NULL)
 	$(XCOPY) $(PERLDLL) ..\t\$(NULL)
 	$(XCOPY) $(GLOBEXE) ..\t\$(NULL)
 	set PERL_STATIC_EXT=$(STATIC_EXT) && \
-	    cd ..\t && perl.exe harness $(TEST_SWITCHES) $(TEST_FILES)
+	    cd ..\t && perl.exe harness $(TEST_ARGS) $(TEST_SWITCHES) $(TEST_FILES)
 
 _clean :
 	-@erase miniperlmain$(o)
@@ -1894,4 +1907,3 @@ nok: utils $(PERLEXE) $(PERLDLL) Extensions_nonxs Extensions
 
 nokfile: utils $(PERLEXE) $(PERLDLL) Extensions_nonxs Extensions
 	$(PERLEXE) ..\utils\perlbug -nok -s "(UNINSTALLED)" -F perl.nok
-

@@ -439,15 +439,20 @@ struct cop {
 #ifdef USE_ITHREADS
     PADOFFSET	cop_stashoff;	/* offset into PL_stashpad, for the
                                    package the line was compiled in */
-    char *	cop_file;	/* name of file this command is from */
+    char *      cop_file;       /* rcpv containing name of file this command is from */
 #else
     HV *	cop_stash;	/* package line was compiled in */
     GV *	cop_filegv;	/* name of GV file this command is from */
 #endif
     U32		cop_hints;	/* hints bits from pragmata */
     U32		cop_seq;	/* parse sequence number */
-    /* Beware. mg.c and warnings.pl assume the type of this is STRLEN *:  */
-    STRLEN *	cop_warnings;	/* lexical warnings bitmask */
+    char *      cop_warnings;   /* Lexical warnings bitmask vector.
+                                   Refcounted shared copy of ${^WARNING_BITS}.
+                                   This pointer either points at one of the
+                                   magic values for warnings, or it points
+                                   at a buffer constructed with rcpv_new().
+                                   Use the RCPV_LEN() macro to get its length.
+                                 */
     /* compile time state of %^H.  See the comment in op.c for how this is
        used to recreate a hash to return from caller.  */
     COPHH *	cop_hints_hash;
@@ -462,6 +467,9 @@ struct cop {
 /*
 =for apidoc Am|const char *|CopFILE|const COP * c
 Returns the name of the file associated with the C<COP> C<c>
+
+=for apidoc Am|const char *|CopFILE_LEN|const COP * c
+Returns the length of the file associated with the C<COP> C<c>
 
 =for apidoc Am|line_t|CopLINE|const COP * c
 Returns the line number in the source code associated with the C<COP> C<c>
@@ -478,6 +486,17 @@ Returns the SV associated with the C<COP> C<c>
 
 =for apidoc Am|void|CopFILE_set|COP * c|const char * pv
 Makes C<pv> the name of the file associated with the C<COP> C<c>
+
+=for apidoc Am|void|CopFILE_setn|COP * c|const char * pv|STRLEN len
+Makes C<pv> the name of the file associated with the C<COP> C<c>
+
+=for apidoc Am|void|CopFILE_copy|COP * dst|COP * src
+Efficiently copies the cop file name from one COP to another. Wraps
+the required logic to do a refcounted copy under threads or not.
+
+=for apidoc Am|void|CopFILE_free|COP * c
+Frees the file data in a cop. Under the hood this is a refcounting
+operation.
 
 =for apidoc Am|GV *|CopFILEGV|const COP * c
 Returns the GV associated with the C<COP> C<c>
@@ -506,14 +525,88 @@ string C<p>, creating the package if necessary.
 =cut
 */
 
+/*
+=for apidoc Am|RCPV *|RCPVx|char *pv
+Returns the RCPV structure (struct rcpv) for a refcounted
+string pv created with C<rcpv_new()>.
+
+=for apidoc Am|RCPV *|RCPV_REFCOUNT|char *pv
+Returns the refcount for a pv created with C<rcpv_new()>. 
+
+=for apidoc Am|RCPV *|RCPV_LEN|char *pv
+Returns the length of a pv created with C<rcpv_new()>.
+Note that this reflects the length of the string from the callers
+point of view, it does not include the mandatory null which is
+always injected at the end of the string by rcpv_new().
+
+=cut
+*/
+
+struct rcpv {
+    STRLEN  refcount;  /* UV would mean a 64 refcnt on
+                          32 bit builds with -Duse64bitint */
+    STRLEN  len;       /* length of string including mandatory
+                          null byte at end */
+    char    pv[1];
+};
+typedef struct rcpv RCPV;
+
+#define RCPVf_USE_STRLEN    (1 << 0)
+#define RCPVf_NO_COPY       (1 << 1)
+#define RCPVf_ALLOW_EMPTY   (1 << 2)
+
+#define RCPVx(pv_arg)       ((RCPV *)((pv_arg) - STRUCT_OFFSET(struct rcpv, pv)))
+#define RCPV_REFCOUNT(pv)   (RCPVx(pv)->refcount)
+#define RCPV_LEN(pv)        (RCPVx(pv)->len-1) /* len always includes space for a null */
+
 #ifdef USE_ITHREADS
 
-#  define CopFILE(c)		((c)->cop_file)
+#  define CopFILE(c)            ((c)->cop_file)
+#  define CopFILE_LEN(c)        (CopFILE(c) ? RCPV_LEN(CopFILE(c)) : 0)
 #  define CopFILEGV(c)		(CopFILE(c) \
                                  ? gv_fetchfile(CopFILE(c)) : NULL)
 
-#  define CopFILE_set(c,pv)	((c)->cop_file = savesharedpv(pv))
-#  define CopFILE_setn(c,pv,l)  ((c)->cop_file = savesharedpvn((pv),(l)))
+#  define CopFILE_set_x(c,pv)       ((c)->cop_file = rcpv_new((pv),0,RCPVf_USE_STRLEN))
+#  define CopFILE_setn_x(c,pv,l)    ((c)->cop_file = rcpv_new((pv),(l),0))
+#  define CopFILE_free_x(c)         ((c)->cop_file = rcpv_free((c)->cop_file))
+#  define CopFILE_copy_x(dst,src)   ((dst)->cop_file = rcpv_copy((src)->cop_file))
+
+/* change condition to 1 && to enable this debugging */
+#  define CopFILE_debug(c,t,rk)                 \
+    if (0 && (c)->cop_file)                     \
+        PerlIO_printf(Perl_debug_log,           \
+            "%-14s THX:%p OP:%p PV:%p rc: "     \
+            "%6zu fn: '%.*s' at %s line %d\n",  \
+            (t), aTHX, (c), (c)->cop_file,      \
+            RCPV_REFCOUNT((c)->cop_file)-rk,    \
+            (int)RCPV_LEN((c)->cop_file),       \
+            (c)->cop_file,__FILE__,__LINE__)    \
+
+
+#  define CopFILE_set(c,pv)                     \
+    STMT_START {                                \
+        CopFILE_set_x(c,pv);                    \
+        CopFILE_debug(c,"CopFILE_set", 0);      \
+    } STMT_END
+
+#  define CopFILE_setn(c,pv,l)                  \
+    STMT_START {                                \
+        CopFILE_setn_x(c,pv,l);                 \
+        CopFILE_debug(c,"CopFILE_setn", 0);     \
+    } STMT_END
+
+#  define CopFILE_copy(dst,src)                 \
+    STMT_START {                                \
+        CopFILE_copy_x((dst),(src));            \
+        CopFILE_debug((dst),"CopFILE_copy", 0); \
+    } STMT_END
+
+#  define CopFILE_free(c)                       \
+    STMT_START {                                \
+        CopFILE_debug((c),"CopFILE_free", 1);   \
+        CopFILE_free_x(c);                      \
+    } STMT_END
+
 
 #  define CopFILESV(c)		(CopFILE(c) \
                                  ? GvSV(gv_fetchfile(CopFILE(c))) : NULL)
@@ -526,13 +619,13 @@ string C<p>, creating the package if necessary.
 #  define CopSTASH_set(c,hv)	((c)->cop_stashoff = (hv)		\
                                     ? alloccopstash(hv)			\
                                     : 0)
-#  define CopFILE_free(c)	(PerlMemShared_free(CopFILE(c)),(CopFILE(c) = NULL))
 
 #else /* Above: yes threads; Below no threads */
 
 #  define CopFILEGV(c)		((c)->cop_filegv)
 #  define CopFILEGV_set(c,gv)	((c)->cop_filegv = (GV*)SvREFCNT_inc(gv))
 #  define CopFILE_set(c,pv)	CopFILEGV_set((c), gv_fetchfile(pv))
+#  define CopFILE_copy(dst,src) CopFILEGV_set((dst),CopFILEGV(src))
 #  define CopFILE_setn(c,pv,l)	CopFILEGV_set((c), gv_fetchfile_flags((pv),(l),0))
 #  define CopFILESV(c)		(CopFILEGV(c) ? GvSV(CopFILEGV(c)) : NULL)
 #  define CopFILEAV(c)		(CopFILEGV(c) ? GvAV(CopFILEGV(c)) : NULL)
@@ -544,6 +637,8 @@ string C<p>, creating the package if necessary.
 #  define CopFILEAVn(c)         (CopFILEGV(c) ? GvAVn(CopFILEGV(c)) : NULL)
 #  define CopFILE(c)		(CopFILEGV(c) /* +2 for '_<' */         \
                                     ? GvNAME(CopFILEGV(c))+2 : NULL)
+#  define CopFILE_LEN(c)	(CopFILEGV(c) /* -2 for '_<' */         \
+                                    ? GvNAMELEN(CopFILEGV(c))-2 : 0)
 #  define CopSTASH(c)		((c)->cop_stash)
 #  define CopSTASH_set(c,hv)	((c)->cop_stash = (hv))
 #  define CopFILE_free(c)	(SvREFCNT_dec(CopFILEGV(c)),(CopFILEGV(c) = NULL))
@@ -557,6 +652,8 @@ string C<p>, creating the package if necessary.
 
 #define CopHINTHASH_get(c)	((COPHH*)((c)->cop_hints_hash))
 #define CopHINTHASH_set(c,h)	((c)->cop_hints_hash = (h))
+
+#define CopFEATURES_setfrom(dst, src) ((dst)->cop_features = (src)->cop_features)
 
 /*
 =for apidoc   Am|SV *|cop_hints_fetch_pv |const COP *cop|const char *key              |U32 hash|U32 flags
