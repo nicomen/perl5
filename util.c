@@ -557,7 +557,7 @@ Free_t   Perl_mfree (Malloc_t where)
 /* This is the value stored in *retlen in the two delimcpy routines below when
  * there wasn't enough room in the destination to store everything it was asked
  * to.  The value is deliberately very large so that hopefully if code uses it
- * unquestioninly to access memory, it will likely segfault.  And it is small
+ * unquestioningly to access memory, it will likely segfault.  And it is small
  * enough that if the caller does some arithmetic on it before accessing, it
  * won't overflow into a small legal number. */
 #define DELIMCPY_OUT_OF_BOUNDS_RET  I32_MAX
@@ -1319,77 +1319,6 @@ Perl_cntrl_to_mnemonic(const U8 c)
     return NULL;
 }
 
-/* copy a string to a safe spot */
-
-/*
-=for apidoc_section $string
-=for apidoc savepv
-
-Perl's version of C<strdup()>.  Returns a pointer to a newly allocated
-string which is a duplicate of C<pv>.  The size of the string is
-determined by C<strlen()>, which means it may not contain embedded C<NUL>
-characters and must have a trailing C<NUL>.  To prevent memory leaks, the
-memory allocated for the new string needs to be freed when no longer needed.
-This can be done with the C<L</Safefree>> function, or
-L<C<SAVEFREEPV>|perlguts/SAVEFREEPV(p)>.
-
-On some platforms, Windows for example, all allocated memory owned by a thread
-is deallocated when that thread ends.  So if you need that not to happen, you
-need to use the shared memory functions, such as C<L</savesharedpv>>.
-
-=cut
-*/
-
-char *
-Perl_savepv(pTHX_ const char *pv)
-{
-    PERL_UNUSED_CONTEXT;
-    if (!pv)
-        return NULL;
-    else {
-        char *newaddr;
-        const STRLEN pvlen = strlen(pv)+1;
-        Newx(newaddr, pvlen, char);
-        return (char*)memcpy(newaddr, pv, pvlen);
-    }
-}
-
-/* same thing but with a known length */
-
-/*
-=for apidoc savepvn
-
-Perl's version of what C<strndup()> would be if it existed.  Returns a
-pointer to a newly allocated string which is a duplicate of the first
-C<len> bytes from C<pv>, plus a trailing
-C<NUL> byte.  The memory allocated for
-the new string can be freed with the C<Safefree()> function.
-
-On some platforms, Windows for example, all allocated memory owned by a thread
-is deallocated when that thread ends.  So if you need that not to happen, you
-need to use the shared memory functions, such as C<L</savesharedpvn>>.
-
-=cut
-*/
-
-char *
-Perl_savepvn(pTHX_ const char *pv, Size_t len)
-{
-    char *newaddr;
-    PERL_UNUSED_CONTEXT;
-
-    Newx(newaddr,len+1,char);
-    /* Give a meaning to NULL pointer mainly for the use in sv_magic() */
-    if (pv) {
-        /* might not be null terminated */
-        newaddr[len] = '\0';
-        return (char *) CopyD(pv,newaddr,len,char);
-    }
-    else {
-        return (char *) ZeroD(newaddr,len+1,char);
-    }
-}
-
 /*
 =for apidoc savesharedpv
 
@@ -1439,53 +1368,6 @@ Perl_savesharedpvn(pTHX_ const char *const pv, const STRLEN len)
     }
     newaddr[len] = '\0';
     return (char*)memcpy(newaddr, pv, len);
-}
-
-/*
-=for apidoc savesvpv
-
-A version of C<savepv()>/C<savepvn()> which gets the string to duplicate from
-the passed in SV using C<SvPV()>
-
-On some platforms, Windows for example, all allocated memory owned by a thread
-is deallocated when that thread ends.  So if you need that not to happen, you
-need to use the shared memory functions, such as C<L</savesharedsvpv>>.
-
-=cut
-*/
-
-char *
-Perl_savesvpv(pTHX_ SV *sv)
-{
-    STRLEN len;
-    const char * const pv = SvPV_const(sv, len);
-    char *newaddr;
-
-    PERL_ARGS_ASSERT_SAVESVPV;
-
-    ++len;
-    Newx(newaddr,len,char);
-    return (char *) CopyD(pv,newaddr,len,char);
-}
-
-/*
-=for apidoc savesharedsvpv
-
-A version of C<savesharedpv()> which allocates the duplicate string in
-memory which is shared between threads.
-
-=cut
-*/
-
-char *
-Perl_savesharedsvpv(pTHX_ SV *sv)
-{
-    STRLEN len;
-    const char * const pv = SvPV_const(sv, len);
-
-    PERL_ARGS_ASSERT_SAVESHAREDSVPV;
-
-    return savesharedpvn(pv, len);
 }
 
 /* the SV for Perl_form() and mess() is not kept in an arena */
@@ -3727,7 +3609,7 @@ Perl_set_context(void *t)
     cthread_set_data(cthread_self(), t);
 #  else
     /* We set thread-specific value always, as C++ code has to read it with
-     * pthreads, beacuse the declaration syntax for thread local storage for C11
+     * pthreads, because the declaration syntax for thread local storage for C11
      * is incompatible with C++, meaning that we can't expose the thread local
      * variable to C++ code. */
     {
@@ -4182,141 +4064,6 @@ Perl_mini_mktime(struct tm *ptm)
     ptm->tm_wday = (jday + WEEKDAY_BIAS) % 7;
 }
 
-char *
-Perl_my_strftime(pTHX_ const char *fmt, int sec, int min, int hour, int mday, int mon, int year, int wday, int yday, int isdst)
-{
-#ifdef HAS_STRFTIME
-
-/*
-=for apidoc_section $time
-=for apidoc      my_strftime
-=for apidoc_item my_strftime8
-
-strftime(), but with a different API so that the return value is a pointer
-to the formatted result (which MUST be arranged to be FREED BY THE
-CALLER).  This allows these functions to increase the buffer size as needed,
-so that the caller doesn't have to worry about that.
-
-C<my_strftime8> is the same as plain C<my_strftime>, but has an extra
-parameter, a pointer to a variable declared as L</C<utf8ness_t>>.
-Upon return, its variable will be set to indicate how the resultant string
-should be treated with regards to its UTF-8ness.
-
-Note that yday and wday effectively are ignored by these functions, as
-mini_mktime() overwrites them
-
-Also note that they are always executed in the underlying locale of the program,
-giving localized results.
-
-=cut
- */
-
-  char *buf;
-  int buflen;
-  struct tm mytm;
-  int len;
-
-  PERL_ARGS_ASSERT_MY_STRFTIME;
-
-  init_tm(&mytm);	/* XXX workaround - see init_tm() above */
-  mytm.tm_sec = sec;
-  mytm.tm_min = min;
-  mytm.tm_hour = hour;
-  mytm.tm_mday = mday;
-  mytm.tm_mon = mon;
-  mytm.tm_year = year;
-  mytm.tm_wday = wday;
-  mytm.tm_yday = yday;
-  mytm.tm_isdst = isdst;
-  mini_mktime(&mytm);
-  /* use libc to get the values for tm_gmtoff and tm_zone [perl #18238] */
-#if defined(HAS_MKTIME) && (defined(HAS_TM_TM_GMTOFF) || defined(HAS_TM_TM_ZONE))
-  STMT_START {
-    struct tm mytm2;
-    mytm2 = mytm;
-    MKTIME_LOCK;
-    mktime(&mytm2);
-    MKTIME_UNLOCK;
-#ifdef HAS_TM_TM_GMTOFF
-    mytm.tm_gmtoff = mytm2.tm_gmtoff;
-#endif
-#ifdef HAS_TM_TM_ZONE
-    mytm.tm_zone = mytm2.tm_zone;
-#endif
-  } STMT_END;
-#endif
-  buflen = 64;
-  Newx(buf, buflen, char);
-
-  GCC_DIAG_IGNORE_STMT(-Wformat-nonliteral); /* fmt checked by caller */
-
-  STRFTIME_LOCK;
-  len = strftime(buf, buflen, fmt, &mytm);
-  STRFTIME_UNLOCK;
-
-  GCC_DIAG_RESTORE_STMT;
-
-  /*
-  ** The following is needed to handle the situation where
-  ** tmpbuf overflows.  Basically we want to allocate a buffer
-  ** and try repeatedly, until it's large enough.  The reason why it is so
-  ** complicated ** is that getting a return value of 0 from strftime can
-  ** indicate one of the following:
-  ** 1. buffer overflowed,
-  ** 2. illegal conversion specifier, or
-  ** 3. the format string specifies nothing to be returned (which isn't an
-  **    an error).  This could be because the format is an empty string
-  **    or it specifies %p which yields an empty string in some locales.
-  ** If there is a better way to make it portable, go ahead by
-  ** all means.
-  */
-  if (inRANGE(len, 1, buflen - 1) || (len == 0 && *fmt == '\0'))
-    return buf;
-  else {
-    /* Possibly buf overflowed - try again with a bigger buf */
-    const int fmtlen = strlen(fmt);
-    int bufsize = fmtlen + buflen;
-
-    Renew(buf, bufsize, char);
-    while (buf) {
-
-      GCC_DIAG_IGNORE_STMT(-Wformat-nonliteral); /* fmt checked by caller */
-      STRFTIME_LOCK;
-      buflen = strftime(buf, bufsize, fmt, &mytm);
-      STRFTIME_UNLOCK;
-      GCC_DIAG_RESTORE_STMT;
-
-      if (inRANGE(buflen, 1, bufsize - 1))
-        break;
-      /* heuristic to prevent out-of-memory errors */
-      if (bufsize > 100*fmtlen) {
-
-        /* "%p" can legally return nothing, assume that was the case if we
-         * can't make the buffer large enough to get a non-zero return.  For
-         * any other formats, assume it is an error (probably it is an illegal
-         * conversion specifier.) */
-        if (strEQ(fmt, "%p")) {
-            Renew(buf, 1, char);
-            *buf = '\0';
-        }
-        else {
-            Safefree(buf);
-            buf = NULL;
-        }
-        break;
-      }
-      bufsize *= 2;
-      Renew(buf, bufsize, char);
-    }
-    return buf;
-  }
-#else
-  Perl_croak(aTHX_ "panic: no strftime");
-  return NULL;
-#endif
-}
-
-
 #define SV_CWD_RETURN_UNDEF \
     sv_set_undef(sv); \
     return FALSE
@@ -4515,7 +4262,7 @@ S_socketpair_udp (int fd[2]) {
 
         addresses[i].sin_family = AF_INET;
         addresses[i].sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        addresses[i].sin_port = 0;	/* kernel choses port.  */
+        addresses[i].sin_port = 0;	/* kernel chooses port.  */
         if (PerlSock_bind(sockets[i], (struct sockaddr *) &addresses[i],
                 sizeof(struct sockaddr_in)) == -1)
             goto tidy_up_and_fail;
@@ -4687,7 +4434,7 @@ Perl_my_socketpair (int family, int type, int protocol, int fd[2]) {
     memset(&listen_addr, 0, sizeof(listen_addr));
     listen_addr.sin_family = AF_INET;
     listen_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    listen_addr.sin_port = 0;	/* kernel choses port.  */
+    listen_addr.sin_port = 0;	/* kernel chooses port.  */
     if (PerlSock_bind(listener, (struct sockaddr *) &listen_addr,
             sizeof(listen_addr)) == -1)
         goto tidy_up_and_fail;
@@ -5855,80 +5602,6 @@ S_xs_version_bootcheck(pTHX_ U32 items, U32 ax, const char *xs_p,
         }
     }
 }
-
-/*
-=for apidoc my_strlcat
-
-The C library C<strlcat> if available, or a Perl implementation of it.
-This operates on C C<NUL>-terminated strings.
-
-C<my_strlcat()> appends string C<src> to the end of C<dst>.  It will append at
-most S<C<size - strlen(dst) - 1>> characters.  It will then C<NUL>-terminate,
-unless C<size> is 0 or the original C<dst> string was longer than C<size> (in
-practice this should not happen as it means that either C<size> is incorrect or
-that C<dst> is not a proper C<NUL>-terminated string).
-
-Note that C<size> is the full size of the destination buffer and
-the result is guaranteed to be C<NUL>-terminated if there is room.  Note that
-room for the C<NUL> should be included in C<size>.
-
-The return value is the total length that C<dst> would have if C<size> is
-sufficiently large.  Thus it is the initial length of C<dst> plus the length of
-C<src>.  If C<size> is smaller than the return, the excess was not appended.
-
-=cut
-
-Description stolen from http://man.openbsd.org/strlcat.3
-*/
-#ifndef HAS_STRLCAT
-Size_t
-Perl_my_strlcat(char *dst, const char *src, Size_t size)
-{
-    Size_t used, length, copy;
-
-    used = strlen(dst);
-    length = strlen(src);
-    if (size > 0 && used < size - 1) {
-        copy = (length >= size - used) ? size - used - 1 : length;
-        memcpy(dst + used, src, copy);
-        dst[used + copy] = '\0';
-    }
-    return used + length;
-}
-#endif
-
-
-/*
-=for apidoc my_strlcpy
-
-The C library C<strlcpy> if available, or a Perl implementation of it.
-This operates on C C<NUL>-terminated strings.
-
-C<my_strlcpy()> copies up to S<C<size - 1>> characters from the string C<src>
-to C<dst>, C<NUL>-terminating the result if C<size> is not 0.
-
-The return value is the total length C<src> would be if the copy completely
-succeeded.  If it is larger than C<size>, the excess was not copied.
-
-=cut
-
-Description stolen from http://man.openbsd.org/strlcpy.3
-*/
-#ifndef HAS_STRLCPY
-Size_t
-Perl_my_strlcpy(char *dst, const char *src, Size_t size)
-{
-    Size_t length, copy;
-
-    length = strlen(src);
-    if (size > 0) {
-        copy = (length >= size) ? size - 1 : length;
-        memcpy(dst, src, copy);
-        dst[copy] = '\0';
-    }
-    return length;
-}
-#endif
 
 PERL_STATIC_INLINE bool
 S_gv_has_usable_name(pTHX_ GV *gv)

@@ -500,12 +500,17 @@ static struct debug_tokens {
     DEBUG_TOKEN (IVAL,  PERLY_TILDE),
     DEBUG_TOKEN (OPVAL, PLUGEXPR),
     DEBUG_TOKEN (OPVAL, PLUGSTMT),
-    DEBUG_TOKEN (PVAL,  PLUGADDOP),
-    DEBUG_TOKEN (PVAL,  PLUGHIGHOP),
-    DEBUG_TOKEN (PVAL,  PLUGLOWOP),
-    DEBUG_TOKEN (PVAL,  PLUGMULOP),
-    DEBUG_TOKEN (PVAL,  PLUGPOWOP),
-    DEBUG_TOKEN (PVAL,  PLUGRELOP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_ADD_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_ASSIGN_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_HIGH_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_LOGICAL_AND_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_LOGICAL_OR_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_LOGICAL_AND_LOW_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_LOGICAL_OR_LOW_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_LOW_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_MUL_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_POW_OP),
+    DEBUG_TOKEN (PVAL,  PLUGIN_REL_OP),
     DEBUG_TOKEN (OPVAL, PMFUNC),
     DEBUG_TOKEN (NONE,  POSTJOIN),
     DEBUG_TOKEN (NONE,  POSTDEC),
@@ -573,7 +578,7 @@ S_tokereport(pTHX_ I32 rv, const YYSTYPE* lvalp)
                                     PL_op_name[lvalp->ival]);
             break;
         case TOKENTYPE_PVAL:
-            Perl_sv_catpvf(aTHX_ report, "(pval=\"%s\")", lvalp->pval);
+            Perl_sv_catpvf(aTHX_ report, "(pval=%p)", lvalp->pval);
             break;
         case TOKENTYPE_OPVAL:
             if (lvalp->opval) {
@@ -3071,7 +3076,7 @@ Perl_get_and_check_backslash_N_name(pTHX_ const char* s,
     stops on:
         @ and $ where it appears to be a var, but not for $ as tail anchor
         \l \L \u \U \Q \E
-        (?{  or  (??{
+        (?{  or  (??{ or (*{ or (**{
 
   In transliterations:
     characters are VERY literal, except for - not at the start or end
@@ -3108,7 +3113,7 @@ Perl_get_and_check_backslash_N_name(pTHX_ const char* s,
   The structure of the code is
       while (there's a character to process) {
           handle transliteration ranges
-          skip regexp comments /(?#comment)/ and codes /(?{code})/
+          skip regexp comments /(?#comment)/ and codes /(?{code})/ ((*{code})/
           skip #-initiated comments in //x patterns
           check for embedded arrays
           check for embedded scalars
@@ -3631,9 +3636,9 @@ S_scan_const(pTHX_ char *start)
         }
             /* skip for regexp comments /(?#comment)/, except for the last
              * char, which will be done separately.  Stop on (?{..}) and
-             * friends */
-        else if (*s == '(' && PL_lex_inpat && s[1] == '?' && !in_charclass) {
-            if (s[2] == '#') {
+             * friends (??{ ... }) or (*{ ... }) or (**{ ... }) */
+        else if (*s == '(' && PL_lex_inpat && (s[1] == '?' || s[1] == '*') && !in_charclass) {
+            if (s[1] == '?' && s[2] == '#') {
                 if (s_is_utf8) {
                     PERL_UINT_FAST8_T  len = UTF8SKIP(s);
 
@@ -3649,8 +3654,11 @@ S_scan_const(pTHX_ char *start)
                 }
             }
             else if (!PL_lex_casemods
-                     && (    s[2] == '{' /* This should match regcomp.c */
-                         || (s[2] == '?' && s[3] == '{')))
+                     && ( (s[1] == '?' && ( s[2] == '{' /* This should match regcomp.c */
+                           || (s[2] == '?' && s[3] == '{'))) || /* (?{ ... }) (??{ ... }) */
+                          (s[1] == '*' && ( s[2] == '{'
+                           || (s[2] == '*' && s[3] == '{'))) )  /* (*{ ... }) (**{ ... }) */
+                 )
             {
                 break;
             }
@@ -8727,16 +8735,26 @@ static enum yytokentype tokentype_for_plugop(struct Perl_custom_infix *def)
 {
     enum Perl_custom_infix_precedence prec = def->prec;
     if(prec <= INFIX_PREC_LOW)
-        return PLUGLOWOP;
+        return PLUGIN_LOW_OP;
+    if(prec <= INFIX_PREC_LOGICAL_OR_LOW)
+        return PLUGIN_LOGICAL_OR_LOW_OP;
+    if(prec <= INFIX_PREC_LOGICAL_AND_LOW)
+        return PLUGIN_LOGICAL_AND_LOW_OP;
+    if(prec <= INFIX_PREC_ASSIGN)
+        return PLUGIN_ASSIGN_OP;
+    if(prec <= INFIX_PREC_LOGICAL_OR)
+        return PLUGIN_LOGICAL_OR_OP;
+    if(prec <= INFIX_PREC_LOGICAL_AND)
+        return PLUGIN_LOGICAL_AND_OP;
     if(prec <= INFIX_PREC_REL)
-        return PLUGRELOP;
+        return PLUGIN_REL_OP;
     if(prec <= INFIX_PREC_ADD)
-        return PLUGADDOP;
+        return PLUGIN_ADD_OP;
     if(prec <= INFIX_PREC_MUL)
-        return PLUGMULOP;
+        return PLUGIN_MUL_OP;
     if(prec <= INFIX_PREC_POW)
-        return PLUGPOWOP;
-    return PLUGHIGHOP;
+        return PLUGIN_POW_OP;
+    return PLUGIN_HIGH_OP;
 }
 
 OP *
@@ -8831,7 +8849,7 @@ yyl_keylookup(pTHX_ char *s, GV *gv)
                 (*def->parse)(aTHX_ &result->parsedata, def);
                 s = PL_bufptr; /* restore local s variable */
             }
-            pl_yylval.pval = (char *)result;
+            pl_yylval.pval = result;
             CLINE;
             OPERATOR(tokentype_for_plugop(def));
         }
@@ -8937,7 +8955,7 @@ yyl_try(pTHX_ char *s)
                 (*def->parse)(aTHX_ &result->parsedata, def);
                 s = PL_bufptr; /* restore local s variable */
             }
-            pl_yylval.pval = (char *)result;
+            pl_yylval.pval = result;
             CLINE;
             OPERATOR(tokentype_for_plugop(def));
         }
@@ -9028,7 +9046,7 @@ yyl_try(pTHX_ char *s)
                             && strchr(PL_splitstr + 1, *PL_splitstr))
                         {
                             /* strchr is ok, because -F pattern can't contain
-                             * embeddded NULs */
+                             * embedded NULs */
                             Perl_sv_catpvf(aTHX_ PL_linestr, "our @F=split(%s);", PL_splitstr);
                         }
                         else {
@@ -9560,7 +9578,7 @@ Perl_yylex(pTHX)
             NEXTVAL_NEXTTOKE.ival = OP_JOIN;	/* emulate join($", ...) */
             force_next(FUNC);
         }
-        /* Convert (?{...}) and friends to 'do {...}' */
+        /* Convert (?{...}) or (*{...}) and friends to 'do {...}' */
         if (PL_lex_inpat && *PL_bufptr == '(') {
             PL_parser->lex_shared->re_eval_start = PL_bufptr;
             PL_bufptr += 2;
@@ -10607,9 +10625,12 @@ S_scan_pat(pTHX_ char *start, I32 type)
         char *e, *p = SvPV(PL_lex_stuff, len);
         e = p + len;
         for (; p < e; p++) {
-            if (p[0] == '(' && p[1] == '?'
-                && (p[2] == '{' || (p[2] == '?' && p[3] == '{')))
-            {
+            if (p[0] == '(' && (
+                (p[1] == '?' && (p[2] == '{' ||
+                                (p[2] == '?' && p[3] == '{'))) ||
+                (p[1] == '*' && (p[2] == '{' ||
+                                (p[2] == '*' && p[3] == '{')))
+            )){
                 pm->op_pmflags |= PMf_HAS_CV;
                 break;
             }
@@ -11218,7 +11239,7 @@ S_scan_heredoc(pTHX_ char *s)
             }
         } /* while */
 
-        /* avoid sv_setsv() as we dont wan't to COW here */
+        /* avoid sv_setsv() as we don't want to COW here */
         sv_setpvn(tmpstr,SvPVX(newstr),SvCUR(newstr));
         Safefree(indent);
         SvREFCNT_dec_NN(newstr);
@@ -11327,7 +11348,7 @@ S_scan_inputsymbol(pTHX_ char *start)
         return s;
     }
     else {
-        bool readline_overriden = FALSE;
+        bool readline_overridden = FALSE;
         GV *gv_readline;
         /* we're in a filehandle read situation */
         d = PL_tokenbuf;
@@ -11336,9 +11357,9 @@ S_scan_inputsymbol(pTHX_ char *start)
         if (!len)
             Copy("ARGV",d,5,char);
 
-        /* Check whether readline() is overriden */
+        /* Check whether readline() is overridden */
         if ((gv_readline = gv_override("readline",8)))
-            readline_overriden = TRUE;
+            readline_overridden = TRUE;
 
         /* if <$fh>, create the ops to turn the variable into a
            filehandle
@@ -11360,7 +11381,7 @@ S_scan_inputsymbol(pTHX_ char *start)
                 }
                 else {
                     OP * const o = newPADxVOP(OP_PADSV, 0, tmp);
-                    PL_lex_op = readline_overriden
+                    PL_lex_op = readline_overridden
                         ? newUNOP(OP_ENTERSUB, OPf_STACKED,
                                 op_append_elem(OP_LIST, o,
                                     newCVREF(0, newGVOP(OP_GV,0,gv_readline))))
@@ -11374,7 +11395,7 @@ S_scan_inputsymbol(pTHX_ char *start)
                 gv = gv_fetchpv(d,
                                 GV_ADDMULTI | ( UTF ? SVf_UTF8 : 0 ),
                                 SVt_PV);
-                PL_lex_op = readline_overriden
+                PL_lex_op = readline_overridden
                     ? newUNOP(OP_ENTERSUB, OPf_STACKED,
                             op_append_elem(OP_LIST,
                                 newUNOP(OP_RV2SV, 0, newGVOP(OP_GV, 0, gv)),
@@ -11391,7 +11412,7 @@ S_scan_inputsymbol(pTHX_ char *start)
            (<Foo::BAR> or <FOO>) so build a simple readline OP */
         else {
             GV * const gv = gv_fetchpv(d, GV_ADD | ( UTF ? SVf_UTF8 : 0 ), SVt_PVIO);
-            PL_lex_op = readline_overriden
+            PL_lex_op = readline_overridden
                 ? newUNOP(OP_ENTERSUB, OPf_STACKED,
                         op_append_elem(OP_LIST,
                             newGVOP(OP_GV, 0, gv),
@@ -11585,7 +11606,7 @@ Perl_scan_str(pTHX_ char *start, int keep_bracketed_quoted, int keep_delims, int
                            : * (U8 *) close_delim_str;
     }
     else {  /* Here, the delimiter isn't paired, hence the close is the same as
-               the open; and has aready been set up.  But make sure it isn't
+               the open; and has already been set up.  But make sure it isn't
                deprecated to use this particular delimiter, as we plan
                eventually to make it paired. */
         if (ninstr(deprecated_opening_delims, deprecated_delims_end,
@@ -11597,7 +11618,7 @@ Perl_scan_str(pTHX_ char *start, int keep_bracketed_quoted, int keep_delims, int
         }
 
         /* Note that a NUL may be used as a delimiter, and this happens when
-         * delimitting an empty string, and no special handling for it is
+         * delimiting an empty string, and no special handling for it is
          * needed, as ninstr() calls are used */
     }
 
@@ -13342,6 +13363,27 @@ Perl_wrap_keyword_plugin(pTHX_
     }
     KEYWORD_PLUGIN_MUTEX_UNLOCK;
 }
+
+/*
+=for apidoc wrap_infix_plugin
+
+B<NOTE:> This API exists entirely for the purpose of making the CPAN module
+C<XS::Parse::Infix> work. It is not expected that additional modules will make
+use of it; rather, that they should use C<XS::Parse::Infix> to provide parsing
+of new infix operators.
+
+Puts a C function into the chain of infix plugins.  This is the preferred
+way to manipulate the L</PL_infix_plugin> variable.  C<new_plugin> is a
+pointer to the C function that is to be added to the infix plugin chain, and
+C<old_plugin_p> points to a storage location where a pointer to the next
+function in the chain will be stored.  The value of C<new_plugin> is written
+into the L</PL_infix_plugin> variable, while the value previously stored there
+is written to C<*old_plugin_p>.
+
+Direct access to L</PL_infix_plugin> should be avoided.
+
+=cut
+*/
 
 void
 Perl_wrap_infix_plugin(pTHX_

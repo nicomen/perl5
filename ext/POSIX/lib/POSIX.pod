@@ -501,7 +501,7 @@ than the explicit two operations [C99].  Added in Perl v5.22.
 Maximum of C<x> and C<y>, except when either is C<NaN>, returns the other [C99].
 Added in Perl v5.22.
 
- my $min = POSIX::fmax($x, $y);
+ my $max = POSIX::fmax($x, $y);
 
 =item C<fmin>
 
@@ -1015,6 +1015,18 @@ Here is how to query the database for the B<de> (Deutsch or German) locale.
 The members whose names begin with C<int_p_> and C<int_n_> were added by
 POSIX.1-2008 and are only available on systems that support them.
 
+A value of -1 returned for numeric entries indicates that the field is
+not applicable to the locale.  This is rare except in the C and related
+locales, which don't have most monetary values defined.  It can also
+happen, quirkily, in fields that are otherwise boolean to indicate that
+the value is kind of neither true nor false.  This happens in C<p_cs_precedes>
+and C<int_p_cs_precedes> when the currency symbol neither precedes nor
+succeeds a positive value but is infixed, by replacing the radix
+character.
+
+Prior to Perl v5.37.7, empty string fields and numeric fields with value
+-1 were omittted from the returned hash.
+
 =item C<localtime>
 
 This is identical to Perl's builtin C<localtime()> function for
@@ -1134,9 +1146,10 @@ parameter is stored.  The optional third parameter is ignored if it is
 larger than the actual length of the second parameter string.
 
 Use C<undef> as the second parameter to this function to get the effect
-of passing NULL as the second parameter to C<mbtowc>.  This resets any
-shift state to its initial value.  The return value is undefined if
-C<mbrtowc> was substituted, so you should never rely on it.
+of passing NULL as the second parameter to C<mbtowc>.  This ignores the
+first parameter, and resets any shift state to its initial value.  The
+return value is undefined if C<mbrtowc> was substituted, so you should
+never rely on it.
 
 When the second parameter is a scalar containing a value that either is
 a PV string or can be forced into one, the return value is the number of
@@ -2202,9 +2215,10 @@ L</mblen> and L</mbtowc> may be used to roll your own decoding/encoding
 of other types of multi-byte locales.
 
 Use C<undef> as the first parameter to this function to get the effect
-of passing NULL as the first parameter to C<wctomb>.  This resets any
-shift state to its initial value.  The return value is undefined if
-C<wcrtomb> was substituted, so you should never rely on it.
+of passing NULL as the first parameter to C<wctomb>.  This ignores the
+second parameter, and resets any shift state to its initial value.  The
+return value is undefined if C<wcrtomb> was substituted, so you should
+never rely on it.
 
 When the first parameter is a scalar, the code point contained in the
 scalar second parameter is converted into a multi-byte string and stored
@@ -2745,7 +2759,7 @@ C<S_IWUSR> C<S_IXGRP> C<S_IXOTH> C<S_IXUSR>
 
 =item Macros
 
-C<S_ISBLK> C<S_ISCHR> C<S_ISDIR> C<S_ISFIFO> C<S_ISREG>
+C<S_ISBLK> C<S_ISCHR> C<S_ISDIR> C<S_ISFIFO> C<S_ISLNK> C<S_ISREG> C<S_ISSOCK>
 
 =back
 

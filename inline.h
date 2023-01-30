@@ -281,6 +281,25 @@ S_strip_spaces(pTHX_ const char * orig, STRLEN * const len)
 }
 #endif
 
+/* ------------------------------- iperlsys.h ------------------------------- */
+#if ! defined(PERL_IMPLICIT_SYS) && defined(USE_ITHREADS)
+
+/* Otherwise this function is implemented as macros in iperlsys.h */
+
+PERL_STATIC_INLINE bool
+Perl_PerlEnv_putenv(pTHX_ char * str)
+{
+    PERL_ARGS_ASSERT_PERLENV_PUTENV;
+
+    ENV_LOCK;
+    bool retval = putenv(str);
+    ENV_UNLOCK;
+
+    return retval;
+}
+
+#endif
+
 /* ------------------------------- mg.h ------------------------------- */
 
 #if defined(PERL_CORE) || defined(PERL_EXT)
@@ -568,7 +587,7 @@ Perl_is_utf8_invariant_string_loc(const U8* const s, STRLEN len, const U8 ** ep)
         /* Here, we know we have at least one full word to process.  Process
          * per-word as long as we have at least a full word left */
         do {
-            if ((* (PERL_UINTMAX_T *) x) & PERL_VARIANTS_WORD_MASK)  {
+            if ((* (const PERL_UINTMAX_T *) x) & PERL_VARIANTS_WORD_MASK)  {
 
                 /* Found a variant.  Just return if caller doesn't want its
                  * exact position */
@@ -579,7 +598,7 @@ Perl_is_utf8_invariant_string_loc(const U8* const s, STRLEN len, const U8 ** ep)
 #  if   BYTEORDER == 0x1234 || BYTEORDER == 0x12345678    \
      || BYTEORDER == 0x4321 || BYTEORDER == 0x87654321
 
-                *ep = x + variant_byte_number(* (PERL_UINTMAX_T *) x);
+                *ep = x + variant_byte_number(* (const PERL_UINTMAX_T *) x);
                 assert(*ep >= s && *ep < send);
 
                 return FALSE;
@@ -1454,7 +1473,7 @@ Perl_is_utf8_string_loclen(const U8 *s, STRLEN len, const U8 **ep, STRLEN *el)
  * This uses adaptations of the table and algorithm given in
  * https://bjoern.hoehrmann.de/utf-8/decoder/dfa/, which provides comprehensive
  * documentation of the original version.  A copyright notice for the original
- * version is given at the beginning of this file.  The Perl adapations are
+ * version is given at the beginning of this file.  The Perl adaptations are
  * documented at the definition of PL_extended_utf8_dfa_tab[].
  *
  * This dfa is fast.  There are three exit conditions:
@@ -1567,7 +1586,7 @@ machines) is a valid UTF-8 character.
 This uses an adaptation of the table and algorithm given in
 https://bjoern.hoehrmann.de/utf-8/decoder/dfa/, which provides comprehensive
 documentation of the original version.  A copyright notice for the original
-version is given at the beginning of this file.  The Perl adapation is
+version is given at the beginning of this file.  The Perl adaptation is
 documented at the definition of PL_extended_utf8_dfa_tab[].
 */
 
@@ -1636,7 +1655,7 @@ C<L</is_strict_utf8_string_loclen>> to check entire strings.
 This uses an adaptation of the tables and algorithm given in
 https://bjoern.hoehrmann.de/utf-8/decoder/dfa/, which provides comprehensive
 documentation of the original version.  A copyright notice for the original
-version is given at the beginning of this file.  The Perl adapation is
+version is given at the beginning of this file.  The Perl adaptation is
 documented at the definition of strict_extended_utf8_dfa_tab[].
 
 */
@@ -1691,7 +1710,7 @@ C<L</is_c9strict_utf8_string_loclen>> to check entire strings.
 This uses an adaptation of the tables and algorithm given in
 https://bjoern.hoehrmann.de/utf-8/decoder/dfa/, which provides comprehensive
 documentation of the original version.  A copyright notice for the original
-version is given at the beginning of this file.  The Perl adapation is
+version is given at the beginning of this file.  The Perl adaptation is
 documented at the definition of PL_c9_utf8_dfa_tab[].
 
 */
@@ -2428,7 +2447,7 @@ Perl_utf8n_to_uvchr_msgs(const U8 *s,
      * https://bjoern.hoehrmann.de/utf-8/decoder/dfa/, which provides
      * comprehensive documentation of the original version.  A copyright notice
      * for the original version is given at the beginning of this file.  The
-     * Perl adapation is documented at the definition of PL_strict_utf8_dfa_tab[].
+     * Perl adaptation is documented at the definition of PL_strict_utf8_dfa_tab[].
      */
 
     const U8 * const s0 = s;
@@ -3505,6 +3524,198 @@ Perl_padname_refcnt_inc(PADNAME *pn)
     PadnameREFCNT(pn)++;
     return pn;
 }
+
+/* copy a string to a safe spot */
+
+/*
+=for apidoc_section $string
+=for apidoc savepv
+
+Perl's version of C<strdup()>.  Returns a pointer to a newly allocated
+string which is a duplicate of C<pv>.  The size of the string is
+determined by C<strlen()>, which means it may not contain embedded C<NUL>
+characters and must have a trailing C<NUL>.  To prevent memory leaks, the
+memory allocated for the new string needs to be freed when no longer needed.
+This can be done with the C<L</Safefree>> function, or
+L<C<SAVEFREEPV>|perlguts/SAVEFREEPV(p)>.
+
+On some platforms, Windows for example, all allocated memory owned by a thread
+is deallocated when that thread ends.  So if you need that not to happen, you
+need to use the shared memory functions, such as C<L</savesharedpv>>.
+
+=cut
+*/
+
+PERL_STATIC_INLINE char *
+Perl_savepv(pTHX_ const char *pv)
+{
+    PERL_UNUSED_CONTEXT;
+    if (!pv)
+        return NULL;
+    else {
+        char *newaddr;
+        const STRLEN pvlen = strlen(pv)+1;
+        Newx(newaddr, pvlen, char);
+        return (char*)memcpy(newaddr, pv, pvlen);
+    }
+}
+
+/* same thing but with a known length */
+
+/*
+=for apidoc savepvn
+
+Perl's version of what C<strndup()> would be if it existed.  Returns a
+pointer to a newly allocated string which is a duplicate of the first
+C<len> bytes from C<pv>, plus a trailing
+C<NUL> byte.  The memory allocated for
+the new string can be freed with the C<Safefree()> function.
+
+On some platforms, Windows for example, all allocated memory owned by a thread
+is deallocated when that thread ends.  So if you need that not to happen, you
+need to use the shared memory functions, such as C<L</savesharedpvn>>.
+
+=cut
+*/
+
+PERL_STATIC_INLINE char *
+Perl_savepvn(pTHX_ const char *pv, Size_t len)
+{
+    char *newaddr;
+    PERL_UNUSED_CONTEXT;
+
+    Newx(newaddr,len+1,char);
+    /* Give a meaning to NULL pointer mainly for the use in sv_magic() */
+    if (pv) {
+        /* might not be null terminated */
+        newaddr[len] = '\0';
+        return (char *) CopyD(pv,newaddr,len,char);
+    }
+    else {
+        return (char *) ZeroD(newaddr,len+1,char);
+    }
+}
+
+/*
+=for apidoc savesvpv
+
+A version of C<savepv()>/C<savepvn()> which gets the string to duplicate from
+the passed in SV using C<SvPV()>
+
+On some platforms, Windows for example, all allocated memory owned by a thread
+is deallocated when that thread ends.  So if you need that not to happen, you
+need to use the shared memory functions, such as C<L</savesharedsvpv>>.
+
+=cut
+*/
+
+PERL_STATIC_INLINE char *
+Perl_savesvpv(pTHX_ SV *sv)
+{
+    STRLEN len;
+    const char * const pv = SvPV_const(sv, len);
+    char *newaddr;
+
+    PERL_ARGS_ASSERT_SAVESVPV;
+
+    ++len;
+    Newx(newaddr,len,char);
+    return (char *) CopyD(pv,newaddr,len,char);
+}
+
+/*
+=for apidoc savesharedsvpv
+
+A version of C<savesharedpv()> which allocates the duplicate string in
+memory which is shared between threads.
+
+=cut
+*/
+
+PERL_STATIC_INLINE char *
+Perl_savesharedsvpv(pTHX_ SV *sv)
+{
+    STRLEN len;
+    const char * const pv = SvPV_const(sv, len);
+
+    PERL_ARGS_ASSERT_SAVESHAREDSVPV;
+
+    return savesharedpvn(pv, len);
+}
+
+/*
+=for apidoc my_strlcat
+
+The C library C<strlcat> if available, or a Perl implementation of it.
+This operates on C C<NUL>-terminated strings.
+
+C<my_strlcat()> appends string C<src> to the end of C<dst>.  It will append at
+most S<C<size - strlen(dst) - 1>> characters.  It will then C<NUL>-terminate,
+unless C<size> is 0 or the original C<dst> string was longer than C<size> (in
+practice this should not happen as it means that either C<size> is incorrect or
+that C<dst> is not a proper C<NUL>-terminated string).
+
+Note that C<size> is the full size of the destination buffer and
+the result is guaranteed to be C<NUL>-terminated if there is room.  Note that
+room for the C<NUL> should be included in C<size>.
+
+The return value is the total length that C<dst> would have if C<size> is
+sufficiently large.  Thus it is the initial length of C<dst> plus the length of
+C<src>.  If C<size> is smaller than the return, the excess was not appended.
+
+=cut
+
+Description stolen from http://man.openbsd.org/strlcat.3
+*/
+#ifndef HAS_STRLCAT
+PERL_STATIC_INLINE Size_t
+Perl_my_strlcat(char *dst, const char *src, Size_t size)
+{
+    Size_t used, length, copy;
+
+    used = strlen(dst);
+    length = strlen(src);
+    if (size > 0 && used < size - 1) {
+        copy = (length >= size - used) ? size - used - 1 : length;
+        memcpy(dst + used, src, copy);
+        dst[used + copy] = '\0';
+    }
+    return used + length;
+}
+#endif
+
+
+/*
+=for apidoc my_strlcpy
+
+The C library C<strlcpy> if available, or a Perl implementation of it.
+This operates on C C<NUL>-terminated strings.
+
+C<my_strlcpy()> copies up to S<C<size - 1>> characters from the string C<src>
+to C<dst>, C<NUL>-terminating the result if C<size> is not 0.
+
+The return value is the total length C<src> would be if the copy completely
+succeeded.  If it is larger than C<size>, the excess was not copied.
+
+=cut
+
+Description stolen from http://man.openbsd.org/strlcpy.3
+*/
+#ifndef HAS_STRLCPY
+PERL_STATIC_INLINE Size_t
+Perl_my_strlcpy(char *dst, const char *src, Size_t size)
+{
+    Size_t length, copy;
+
+    length = strlen(src);
+    if (size > 0) {
+        copy = (length >= size) ? size - 1 : length;
+        memcpy(dst, src, copy);
+        dst[copy] = '\0';
+    }
+    return length;
+}
+#endif
 
 /*
  * ex: set ts=8 sts=4 sw=4 et:

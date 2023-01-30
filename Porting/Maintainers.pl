@@ -230,7 +230,7 @@ use File::Glob qw(:case);
     },
 
     'Config::Perl::V' => {
-        'DISTRIBUTION' => 'HMBRAND/Config-Perl-V-0.34.tgz',
+        'DISTRIBUTION' => 'HMBRAND/Config-Perl-V-0.35.tgz',
         'FILES'        => q[cpan/Config-Perl-V],
         'EXCLUDED'     => [qw(
 		examples/show-v.pl
@@ -413,7 +413,7 @@ use File::Glob qw(:case);
     },
 
     'experimental' => {
-        'DISTRIBUTION' => 'LEONT/experimental-0.029.tar.gz',
+        'DISTRIBUTION' => 'LEONT/experimental-0.030.tar.gz',
         'FILES'        => q[cpan/experimental],
         'EXCLUDED'     => [qr{^xt/}],
     },
@@ -458,7 +458,7 @@ use File::Glob qw(:case);
     },
 
     'ExtUtils::Install' => {
-        'DISTRIBUTION' => 'BINGOS/ExtUtils-Install-2.20.tar.gz',
+        'DISTRIBUTION' => 'BINGOS/ExtUtils-Install-2.22.tar.gz',
         'FILES'        => q[cpan/ExtUtils-Install],
         'EXCLUDED'     => [
             qw( t/lib/Test/Builder.pm
@@ -472,7 +472,7 @@ use File::Glob qw(:case);
     },
 
     'ExtUtils::MakeMaker' => {
-        'DISTRIBUTION' => 'BINGOS/ExtUtils-MakeMaker-7.64.tar.gz',
+        'DISTRIBUTION' => 'BINGOS/ExtUtils-MakeMaker-7.66.tar.gz',
         'FILES'        => q[cpan/ExtUtils-MakeMaker],
         'EXCLUDED'     => [
             qr{^t/lib/Test/},
@@ -663,7 +663,7 @@ use File::Glob qw(:case);
     },
 
     'IO::Zlib' => {
-        'DISTRIBUTION' => 'TOMHUGHES/IO-Zlib-1.11.tar.gz',
+        'DISTRIBUTION' => 'TOMHUGHES/IO-Zlib-1.14.tar.gz',
         'FILES'        => q[cpan/IO-Zlib],
     },
 
@@ -683,7 +683,7 @@ use File::Glob qw(:case);
     },
 
     'JSON::PP' => {
-        'DISTRIBUTION' => 'ISHIGAKI/JSON-PP-4.12.tar.gz',
+        'DISTRIBUTION' => 'ISHIGAKI/JSON-PP-4.16.tar.gz',
         'FILES'        => q[cpan/JSON-PP],
     },
 
@@ -815,9 +815,9 @@ use File::Glob qw(:case);
     },
 
     'Memoize' => {
-        'DISTRIBUTION' => 'ARISTOTLE/Memoize-1.15.tar.gz',
+        'DISTRIBUTION' => 'ARISTOTLE/Memoize-1.16.tar.gz',
         'FILES'        => q[cpan/Memoize],
-        'EXCLUDED'     => [ qr{^inc/}, 'article.html' ],
+        'EXCLUDED'     => [ qr{^inc/} ],
     },
 
     'MIME::Base64' => {
@@ -827,7 +827,7 @@ use File::Glob qw(:case);
     },
 
     'Module::CoreList' => {
-        'DISTRIBUTION' => 'BINGOS/Module-CoreList-5.20221120.tar.gz',
+        'DISTRIBUTION' => 'BINGOS/Module-CoreList-5.20230120.tar.gz',
         'FILES'        => q[dist/Module-CoreList],
     },
 
@@ -983,10 +983,11 @@ use File::Glob qw(:case);
     },
 
     'podlators' => {
-        'DISTRIBUTION' => 'RRA/podlators-5.00.tar.gz',
+        'DISTRIBUTION' => 'RRA/podlators-5.01.tar.gz',
         'MAIN_MODULE'  => 'Pod::Man',
         'FILES'        => q[cpan/podlators pod/perlpodstyle.pod],
         'EXCLUDED'     => [
+            qr{^\.github/dependabot\.yml},
             qr{^\.github/workflows/build\.yaml},
         ],
 

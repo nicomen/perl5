@@ -161,7 +161,7 @@ required, but is kept for backwards compatibility.
 #if (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) || (defined(__SUNPRO_C)) /* C99 or close enough. */
 #  define FUNCTION__ __func__
 #  define SAFE_FUNCTION__ __func__
-#elif (defined(__DECC_VER)) /* Tru64 or VMS, and strict C89 being used, but not modern enough cc (in Tur64, -c99 not known, only -std1). */
+#elif (defined(__DECC_VER)) /* Tru64 or VMS, and strict C89 being used, but not modern enough cc (in Tru64, -c99 not known, only -std1). */
 #  define FUNCTION__ ("")
 #  define SAFE_FUNCTION__ ("UNKNOWN")
 #else
@@ -645,7 +645,7 @@ C<l1> gives the number of bytes in C<s1>.
 Returns true or false.
 
 =for apidoc Am|bool|memCHRs|"list"|char c
-Returns the position of the first occurence of the byte C<c> in the literal
+Returns the position of the first occurrence of the byte C<c> in the literal
 string C<"list">, or NULL if C<c> doesn't appear in C<"list">.  All bytes are
 treated as unsigned char.  Thus this macro can be used to determine if C<c> is
 in a set of particular characters.  Unlike L<strchr(3)>, it works even if C<c>
@@ -1659,8 +1659,7 @@ END_EXTERN_C
 #   define isPUNCT_A(c)  generic_isCC_A_(c, CC_PUNCT_)
 #   define isSPACE_A(c)  generic_isCC_A_(c, CC_SPACE_)
 #   define isWORDCHAR_A(c) generic_isCC_A_(c, CC_WORDCHAR_)
-#   define isXDIGIT_A(c)  generic_isCC_(c, CC_XDIGIT_) /* No non-ASCII xdigits
-                                                        */
+#   define isXDIGIT_A(c)  generic_isCC_(c, CC_XDIGIT_) /* No non-ASCII xdigits */
 #   define isIDFIRST_A(c) generic_isCC_A_(c, CC_IDFIRST_)
 #   define isALPHA_L1(c)  generic_isCC_(c, CC_ALPHA_)
 #   define isALPHANUMERIC_L1(c) generic_isCC_(c, CC_ALPHANUMERIC_)
@@ -1831,13 +1830,6 @@ END_EXTERN_C
      * don't think it's necessary to be so for the purposes where this gets
      * compiled */
 #   define isQUOTEMETA_(c)      (FITS_IN_8_BITS(c) && ! isWORDCHAR_L1(c))
-#   define _IS_IN_SOME_FOLD_ONLY_FOR_USE_BY_REGCOMP_DOT_C(c) isALPHA_L1(c)
-
-    /*  And these aren't accurate at all.  They are useful only for above
-     *  Latin1, which utilities and bootstrapping don't deal with */
-#   define _IS_NON_FINAL_FOLD_ONLY_FOR_USE_BY_REGCOMP_DOT_C(c) 0
-#   define _HAS_NONLATIN1_SIMPLE_FOLD_CLOSURE_ONLY_FOR_USE_BY_REGCOMP_DOT_C_AND_REGEXEC_DOT_C(c) 0
-#   define _HAS_NONLATIN1_FOLD_CLOSURE_ONLY_FOR_USE_BY_REGCOMP_DOT_C_AND_REGEXEC_DOT_C(c) 0
 
     /* Many of the macros later in this file are defined in terms of these.  By
      * implementing them with a function, which converts the class number into
@@ -2044,7 +2036,7 @@ END_EXTERN_C
  * has names like isALPHA_LC.  They deal with larger-than-byte inputs, and
  * UTF-8 locales.
  *
- * (Note, proper general operation of the bare libc functons requires you to
+ * (Note, proper general operation of the bare libc functions requires you to
  * cast to U8.  These do that for you automatically.) */
 
 #  define WRAP_U8_LC_(c, classnum, posix)  posix(c)
@@ -2682,6 +2674,10 @@ C<CopyD> is like C<Copy> but returns C<dest>.  Useful
 for encouraging compilers to tail-call
 optimise.
 
+=for apidoc    Am|void  |NewCopy |void* src|void* dest|int nitems|type
+Combines Newx() and Copy() into a single macro. Dest will be allocated
+using Newx() and then src will be copied into it.
+
 =for apidoc    Am|void  |Zero |void* dest|int nitems|type
 =for apidoc_item |void *|ZeroD|void* dest|int nitems|type
 
@@ -2888,6 +2884,11 @@ enum mem_log_type {
 #define MoveD(s,d,n,t)	(MEM_WRAP_CHECK_(n,t) perl_assert_ptr(d), perl_assert_ptr(s), memmove((char*)(d),(const char*)(s), (n) * sizeof(t)))
 #define CopyD(s,d,n,t)	(MEM_WRAP_CHECK_(n,t) perl_assert_ptr(d), perl_assert_ptr(s), memcpy((char*)(d),(const char*)(s), (n) * sizeof(t)))
 #define ZeroD(d,n,t)	(MEM_WRAP_CHECK_(n,t) perl_assert_ptr(d), memzero((char*)(d), (n) * sizeof(t)))
+
+#define NewCopy(s,d,n,t) STMT_START {   \
+    Newx(d,n,t);                        \
+    Copy(s,d,n,t);                      \
+} STMT_END
 
 #define PoisonWith(d,n,t,b)	(MEM_WRAP_CHECK_(n,t) (void)memset((char*)(d), (U8)(b), (n) * sizeof(t)))
 #define PoisonNew(d,n,t)	PoisonWith(d,n,t,0xAB)

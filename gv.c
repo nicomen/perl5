@@ -1194,12 +1194,12 @@ Perl_gv_fetchmethod_pvn_flags(pTHX_ HV *stash, const char *name, const STRLEN le
         }
         else if ( sep_len >= 7 &&
                  strBEGINs(last_separator - 7, "::SUPER")) {
-            /* don't autovifify if ->NoSuchStash::SUPER::method */
+            /* don't autovivify if ->NoSuchStash::SUPER::method */
             stash = gv_stashpvn(origname, sep_len - 7, is_utf8);
             if (stash) flags |= GV_SUPER;
         }
         else {
-            /* don't autovifify if ->NoSuchStash::method */
+            /* don't autovivify if ->NoSuchStash::method */
             stash = gv_stashpvn(origname, sep_len, is_utf8);
         }
         ostash = stash;
@@ -2939,12 +2939,12 @@ Perl_gp_free(pTHX_ GV *gv)
          simple problems likely found by fuzzers but never written by humans,
          whilst leaving working code unchanged. */
       if (sv) {
-          SV *referant;
+          SV *referent;
           if (SvREFCNT(sv) > 1 || SvOBJECT(sv) || UNLIKELY(in_global_destruction)) {
               SvREFCNT_dec_NN(sv);
               sv = NULL;
-          } else if (SvROK(sv) && (referant = SvRV(sv))
-                     && (SvREFCNT(referant) > 1 || SvOBJECT(referant))) {
+          } else if (SvROK(sv) && (referent = SvRV(sv))
+                     && (SvREFCNT(referent) > 1 || SvOBJECT(referent))) {
               SvREFCNT_dec_NN(sv);
               sv = NULL;
           } else {
@@ -3134,7 +3134,7 @@ Perl_Gv_AMupdate(pTHX_ HV *stash, bool destructing)
       sv_unmagic(MUTABLE_SV(stash), PERL_MAGIC_overload_table);
   }
 
-  DEBUG_o( Perl_deb(aTHX_ "Recalcing overload magic in package %s\n",HvNAME_get(stash)) );
+  DEBUG_o( Perl_deb(aTHX_ "Recalculating overload magic in package %s\n",HvNAME_get(stash)) );
 
   Zero(&amt,1,AMT);
   amt.was_ok_sub = newgen;
@@ -3377,6 +3377,153 @@ Perl_try_amagic_un(pTHX_ int method, int flags) {
 }
 
 
+/*
+=for apidoc amagic_applies
+
+Check C<sv> to see if the overloaded (active magic) operation C<method>
+applies to it. If the sv is not SvROK or it is not an object then returns
+false, otherwise checks if the object is blessed into a class supporting
+overloaded operations, and returns true if a call to amagic_call() with
+this SV and the given method would trigger an amagic operation, including
+via the overload fallback rules or via nomethod. Thus a call like:
+
+    amagic_applies(sv, string_amg, AMG_unary)
+
+would return true for an object with overloading set up in any of the
+following ways:
+
+    use overload q("") => sub { ... };
+    use overload q(0+) => sub { ... }, fallback => 1;
+
+and could be used to tell if a given object would stringify to something
+other than the normal default ref stringification.
+
+Note that the fact that this function returns TRUE does not mean you
+can succesfully perform the operation with amagic_call(), for instance
+any overloaded method might throw a fatal exception,  however if this
+function returns FALSE you can be confident that it will NOT perform
+the given overload operation.
+
+C<method> is an integer enum, one of the values found in F<overload.h>,
+for instance C<string_amg>.
+
+C<flags> should be set to AMG_unary for unary operations.
+
+=cut
+*/
+bool
+Perl_amagic_applies(pTHX_ SV *sv, int method, int flags)
+{
+    PERL_ARGS_ASSERT_AMAGIC_APPLIES;
+    PERL_UNUSED_VAR(flags);
+
+    assert(method >= 0 && method < NofAMmeth);
+
+    if (!SvAMAGIC(sv))
+        return FALSE;
+
+    HV *stash = SvSTASH(SvRV(sv));
+    if (!Gv_AMG(stash))
+        return FALSE;
+
+    MAGIC *mg = mg_find((const SV *)stash, PERL_MAGIC_overload_table);
+    if (!mg)
+        return FALSE;
+
+    CV **cvp = NULL;
+    AMT *amtp = NULL;
+    if (AMT_AMAGIC((AMT *)mg->mg_ptr)) {
+        amtp = (AMT *)mg->mg_ptr;
+        cvp = amtp->table;
+    }
+    if (!cvp)
+        return FALSE;
+
+    if (cvp[method])
+        return TRUE;
+
+    /* Note this logic should be kept in sync with amagic_call() */
+    if (amtp->fallback > AMGfallNEVER && flags & AMGf_unary) {
+         CV *cv;       /* This makes it easier to kee ... */
+         int off,off1; /* ... in sync with amagic_call() */
+
+      /* look for substituted methods */
+      /* In all the covered cases we should be called with assign==0. */
+         switch (method) {
+         case inc_amg:
+           if ((cv = cvp[off=add_ass_amg]) || ((cv = cvp[off = add_amg])))
+               return TRUE;
+           break;
+         case dec_amg:
+           if((cv = cvp[off = subtr_ass_amg]) || ((cv = cvp[off = subtr_amg])))
+               return TRUE;
+           break;
+         case bool__amg:
+           if ((cv = cvp[off=numer_amg]) || (cv = cvp[off=string_amg]))
+               return TRUE;
+           break;
+         case numer_amg:
+           if((cv = cvp[off=string_amg]) || (cv = cvp[off=bool__amg]))
+               return TRUE;
+           break;
+         case string_amg:
+           if((cv = cvp[off=numer_amg]) || (cv = cvp[off=bool__amg]))
+               return TRUE;
+           break;
+         case not_amg:
+           if((cv = cvp[off=bool__amg])
+                  || (cv = cvp[off=numer_amg])
+                  || (cv = cvp[off=string_amg]))
+               return TRUE;
+           break;
+         case abs_amg:
+           if((cvp[off1=lt_amg] || cvp[off1=ncmp_amg])
+               && ((cv = cvp[off=neg_amg]) || (cv = cvp[off=subtr_amg])))
+               return TRUE;
+           break;
+         case neg_amg:
+           if ((cv = cvp[off=subtr_amg]))
+               return TRUE;
+           break;
+         }
+    } else if (((cvp && amtp->fallback > AMGfallNEVER))
+               && !(flags & AMGf_unary)) {
+                                /* We look for substitution for
+                                 * comparison operations and
+                                 * concatenation */
+      if (method==concat_amg || method==concat_ass_amg
+          || method==repeat_amg || method==repeat_ass_amg) {
+        return FALSE;            /* Delegate operation to string conversion */
+      }
+      switch (method) {
+         case lt_amg:
+         case le_amg:
+         case gt_amg:
+         case ge_amg:
+         case eq_amg:
+         case ne_amg:
+             if (cvp[ncmp_amg])
+                 return TRUE;
+             break;
+         case slt_amg:
+         case sle_amg:
+         case sgt_amg:
+         case sge_amg:
+         case seq_amg:
+         case sne_amg:
+             if (cvp[scmp_amg])
+                 return TRUE;
+             break;
+      }
+    }
+
+    if (cvp[nomethod_amg])
+        return TRUE;
+
+    return FALSE;
+}
+
+
 /* Implement tryAMAGICbin_MG macro.
    Do get magic, then see if the two stack args are overloaded and if so
    call it.
@@ -3588,6 +3735,7 @@ Perl_amagic_call(pTHX_ SV *left, SV *right, int method, int flags)
   {
     lr = -1;			/* Call method for left argument */
   } else {
+    /* Note this logic should be kept in sync with amagic_applies() */
     if (cvp && amtp->fallback > AMGfallNEVER && flags & AMGf_unary) {
       int logic;
 
@@ -3880,7 +4028,7 @@ Perl_amagic_call(pTHX_ SV *left, SV *right, int method, int flags)
   }
 #endif
     /* Since we use shallow copy during assignment, we need
-     * to dublicate the contents, probably calling user-supplied
+     * to duplicate the contents, probably calling user-supplied
      * version of copy operator
      */
     /* We need to copy in following cases:

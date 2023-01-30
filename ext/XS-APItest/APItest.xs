@@ -125,8 +125,19 @@ S_myset_set(pTHX_ SV* sv, MAGIC* mg)
     return 0;
 }
 
+static int
+S_myset_set_dies(pTHX_ SV* sv, MAGIC* mg)
+{
+    PERL_UNUSED_ARG(sv);
+    PERL_UNUSED_ARG(mg);
+    croak("in S_myset_set_dies");
+    return 0;
+}
+
+
 static MGVTBL vtbl_foo, vtbl_bar;
 static MGVTBL vtbl_myset = { 0, S_myset_set, 0, 0, 0, 0, 0, 0 };
+static MGVTBL vtbl_myset_dies = { 0, S_myset_set_dies, 0, 0, 0, 0, 0, 0 };
 
 static int
 S_mycopy_copy(pTHX_ SV *sv, MAGIC* mg, SV *nsv, const char *name, I32 namlen) {
@@ -1715,6 +1726,18 @@ test_uvchr_to_utf8_flags_msgs(uv, flags)
         RETVAL
 
 MODULE = XS::APItest:Overload   PACKAGE = XS::APItest::Overload
+
+void
+does_amagic_apply(sv, method, flags)
+    SV *sv
+    int method
+    int flags
+    PPCODE:
+        if(Perl_amagic_applies(aTHX_ sv, method, flags))
+            XSRETURN_YES;
+        else
+            XSRETURN_NO;
+
 
 void
 amagic_deref_call(sv, what)
@@ -4664,6 +4687,27 @@ test_MAX_types()
     OUTPUT:
         RETVAL
 
+SV *
+test_HvNAMEf(sv)
+    SV *sv
+    CODE:
+        if (!sv_isobject(sv)) XSRETURN_UNDEF;
+        HV *pkg = SvSTASH(SvRV(sv));
+        RETVAL = newSVpvf("class='%" HvNAMEf "'", pkg);
+    OUTPUT:
+        RETVAL
+
+SV *
+test_HvNAMEf_QUOTEDPREFIX(sv)
+    SV *sv
+    CODE:
+        if (!sv_isobject(sv)) XSRETURN_UNDEF;
+        HV *pkg = SvSTASH(SvRV(sv));
+        RETVAL = newSVpvf("class=%" HvNAMEf_QUOTEDPREFIX, pkg);
+    OUTPUT:
+        RETVAL
+
+
 bool
 sv_numeq(SV *sv1, SV *sv2)
     CODE:
@@ -4806,6 +4850,13 @@ test_get_vtbl()
     # where that magic's job is to increment thingy
 
 void
+sv_magic_myset_dies(SV *rsv, SV *thingy)
+CODE:
+    sv_magicext(SvRV(rsv), NULL, PERL_MAGIC_ext, &vtbl_myset_dies,
+        (const char *)thingy, 0);
+
+
+void
 sv_magic_myset(SV *rsv, SV *thingy)
 CODE:
     sv_magicext(SvRV(rsv), NULL, PERL_MAGIC_ext, &vtbl_myset,
@@ -4827,6 +4878,25 @@ sv_magic_mycopy_count(SV *rsv)
     CODE:
         mg = mg_findext(SvRV(rsv), PERL_MAGIC_ext, &vtbl_mycopy);
         RETVAL = mg ? newSViv(mg->mg_private) : &PL_sv_undef;
+    OUTPUT:
+        RETVAL
+
+int
+my_av_store(SV *rsv, IV i, SV *sv)
+    CODE:
+        if (av_store((AV*)SvRV(rsv), i, sv)) {
+            SvREFCNT_inc(sv);
+            RETVAL = 1;
+        } else {
+            RETVAL = 0;
+        }
+    OUTPUT:
+        RETVAL
+
+STRLEN
+sv_refcnt(SV *sv)
+    CODE:
+        RETVAL = SvREFCNT(sv);
     OUTPUT:
         RETVAL
 
@@ -7835,5 +7905,38 @@ test_CvREFCOUNTED_ANYSV()
 
         RETVAL = failed;
     }
+    OUTPUT:
+        RETVAL
+
+MODULE = XS::APItest            PACKAGE = XS::APItest::global_locale
+
+char *
+switch_to_global_and_setlocale(int category, const char * locale)
+    CODE:
+        switch_to_global_locale();
+        RETVAL = setlocale(category, locale);
+    OUTPUT:
+        RETVAL
+
+bool
+sync_locale()
+    CODE:
+        RETVAL = sync_locale();
+    OUTPUT:
+        RETVAL
+
+NV
+newSvNV(const char * string)
+    CODE:
+        RETVAL = SvNV(newSVpv(string, 0));
+    OUTPUT:
+        RETVAL
+
+MODULE = XS::APItest            PACKAGE = XS::APItest::savestack
+
+IV
+get_savestack_ix()
+    CODE:
+        RETVAL = PL_savestack_ix;
     OUTPUT:
         RETVAL

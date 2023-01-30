@@ -147,7 +147,8 @@ sub _trylocale ($$$$) { # For use only by other functions in this file!
     my $list = shift;
     my $allow_incompatible = shift;
 
-    return if ! $locale || grep { $locale eq $_ } @$list;
+    my $normalized_locale = lc ($locale =~ s/\W//gr);
+    return if ! $locale || grep { $normalized_locale eq lc ($_ =~ s/\W//gr) } @$list;
 
     # This is a toy (pig latin) locale that is not fully implemented on some
     # systems
@@ -160,7 +161,7 @@ sub _trylocale ($$$$) { # For use only by other functions in this file!
     # such systems fully, but we shouldn't disable the user from using
     # locales, as it may work out for them (or not).
     return if    defined $Config{d_setlocale_accepts_any_locale_name}
-              && $locale !~ / ^ (?: C | POSIX | C\.UTF-8 ) $/ix;
+              && $locale !~ / ^ (?: C | POSIX | C\.UTF-?8 ) $/ix;
 
     if (exists $known_bad_locales{$^O}) {
         my @bad_locales = $known_bad_locales{$^O}->@*;

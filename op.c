@@ -5106,6 +5106,148 @@ S_gen_constant_list(pTHX_ OP *o)
 =for apidoc_section $optree_manipulation
 */
 
+enum {
+    FORBID_LOOPEX_DEFAULT = (1<<0),
+};
+
+static void walk_ops_forbid(pTHX_ OP *o, U32 flags, HV *permittedloops, const char *blockname)
+{
+    bool is_loop = FALSE;
+    SV *labelsv = NULL;
+
+    switch(o->op_type) {
+        case OP_NEXTSTATE:
+        case OP_DBSTATE:
+            PL_curcop = (COP *)o;
+            return;
+
+        case OP_RETURN:
+            goto forbid;
+
+        case OP_GOTO:
+            /* TODO: This might be safe, depending on the target */
+            goto forbid;
+
+        case OP_NEXT:
+        case OP_LAST:
+        case OP_REDO:
+            {
+                /* OPf_SPECIAL means this is a default loopex */
+                if(o->op_flags & OPf_SPECIAL) {
+                    if(flags & FORBID_LOOPEX_DEFAULT)
+                        goto forbid;
+
+                    break;
+                }
+                /* OPf_STACKED means it's a dynamically computed label */
+                if(o->op_flags & OPf_STACKED)
+                    goto forbid;
+
+                SV *target = newSVpv(cPVOPo->op_pv, strlen(cPVOPo->op_pv));
+                if(cPVOPo->op_private & OPpPV_IS_UTF8)
+                    SvUTF8_on(target);
+                SAVEFREESV(target);
+
+                if(hv_fetch_ent(permittedloops, target, FALSE, 0))
+                    break;
+
+                goto forbid;
+            }
+
+        case OP_LEAVELOOP:
+            {
+                STRLEN label_len;
+                U32 label_flags;
+                const char *label_pv = CopLABEL_len_flags(PL_curcop, &label_len, &label_flags);
+
+                if(label_pv) {
+                    labelsv = newSVpvn(label_pv, label_len);
+                    if(label_flags & SVf_UTF8)
+                        SvUTF8_on(labelsv);
+                    SAVEFREESV(labelsv);
+
+                    sv_inc(HeVAL(hv_fetch_ent(permittedloops, labelsv, TRUE, 0)));
+                }
+
+                is_loop = TRUE;
+                break;
+            }
+
+forbid:
+            /* diag_listed_as: Can't "%s" out of a "defer" block */
+            /* diag_listed_as: Can't "%s" out of a "finally" block */
+            croak("Can't \"%s\" out of %s", PL_op_name[o->op_type], blockname);
+
+        default:
+            break;
+    }
+
+    if(!(o->op_flags & OPf_KIDS))
+        return;
+
+    OP *kid = cUNOPo->op_first;
+    while(kid) {
+        walk_ops_forbid(aTHX_ kid, flags, permittedloops, blockname);
+        kid = OpSIBLING(kid);
+
+        if(is_loop) {
+            /* Now in the body of the loop; we can permit loopex default */
+            flags &= ~FORBID_LOOPEX_DEFAULT;
+        }
+    }
+
+    if(is_loop && labelsv) {
+        HE *he = hv_fetch_ent(permittedloops, labelsv, FALSE, 0);
+        if(SvIV(HeVAL(he)) > 1)
+            sv_dec(HeVAL(he));
+        else
+            hv_delete_ent(permittedloops, labelsv, 0, 0);
+    }
+}
+
+/*
+=for apidoc forbid_outofblock_ops
+
+Checks an optree that implements a block, to ensure there are no control-flow
+ops that attempt to leave the block.  Any C<OP_RETURN> is forbidden, as is any
+C<OP_GOTO>. Loops are analysed, so any LOOPEX op (C<OP_NEXT>, C<OP_LAST> or
+C<OP_REDO>) that affects a loop that contains it within the block are
+permitted, but those that do not are forbidden.
+
+If any of these forbidden constructions are detected, an exception is thrown
+by using the op name and the blockname argument to construct a suitable
+message.
+
+This function alone is not sufficient to ensure the optree does not perform
+any of these forbidden activities during runtime, as it might call a different
+function that performs a non-local LOOPEX, or a string-eval() that performs a
+C<goto>, or various other things. It is intended purely as a compile-time
+check for those that could be detected statically. Additional runtime checks
+may be required depending on the circumstance it is used for.
+
+Note currently that I<all> C<OP_GOTO> ops are forbidden, even in cases where
+they might otherwise be safe to execute.  This may be permitted in a later
+version.
+
+=cut
+*/
+
+void
+Perl_forbid_outofblock_ops(pTHX_ OP *o, const char *blockname)
+{
+    PERL_ARGS_ASSERT_FORBID_OUTOFBLOCK_OPS;
+
+    ENTER;
+    SAVEVPTR(PL_curcop);
+
+    HV *looplabels = newHV();
+    SAVEFREESV((SV *)looplabels);
+
+    walk_ops_forbid(aTHX_ o, FORBID_LOOPEX_DEFAULT, looplabels, blockname);
+
+    LEAVE;
+}
+
 /* List constructors */
 
 /*
@@ -5328,6 +5470,27 @@ S_force_list(pTHX_ OP *o, bool nullit)
 }
 
 /*
+=for apidoc op_force_list
+
+Promotes o and any siblings to be an C<OP_LIST> if it is not already. If
+a new C<OP_LIST> op was created, its first child will be C<OP_PUSHMARK>.
+The returned node itself will be nulled, leaving only its children.
+
+This is often what you want to do before putting the optree into list
+context; as
+
+    o = op_contextualize(op_force_list(o), G_LIST);
+
+=cut
+*/
+
+OP *
+Perl_op_force_list(pTHX_ OP *o)
+{
+    return force_list(o, TRUE);
+}
+
+/*
 =for apidoc newLISTOP
 
 Constructs, checks, and returns an op of any list type.  C<type> is
@@ -5463,7 +5626,7 @@ Perl_newUNOP(pTHX_ I32 type, I32 flags, OP *first)
     if (!first)
         first = newOP(OP_STUB, 0);
     if (PL_opargs[type] & OA_MARK)
-        first = force_list(first, TRUE);
+        first = op_force_list(first);
 
     NewOp(1101, unop, 1, UNOP);
     OpTYPE_set(unop, type);
@@ -5538,7 +5701,7 @@ S_newMETHOP_internal(pTHX_ I32 type, I32 flags, OP* dynamic_meth, SV* const_meth
 
     NewOp(1101, methop, 1, METHOP);
     if (dynamic_meth) {
-        if (PL_opargs[type] & OA_MARK) dynamic_meth = force_list(dynamic_meth, TRUE);
+        if (PL_opargs[type] & OA_MARK) dynamic_meth = op_force_list(dynamic_meth);
         methop->op_flags = (U8)(flags | OPf_KIDS);
         methop->op_u.op_first = dynamic_meth;
         methop->op_private = (U8)(1 | (flags >> 8));
@@ -5956,7 +6119,7 @@ S_pmtrans(pTHX_ OP *o, OP *expr, OP *repl)
      * of UTF-8 bytes to represent as every other code point in the same
      * partition.
      *
-     * This partioning has been pre-compiled.  Copy it to initialize */
+     * This partitioning has been pre-compiled.  Copy it to initialize */
     len = C_ARRAY_LENGTH(PL_partition_by_byte_length);
     invlist_extend(t_invlist, len);
     t_array = invlist_array(t_invlist);
@@ -7259,7 +7422,7 @@ Perl_pmruntime(pTHX_ OP *o, OP *expr, OP *repl, UV flags, I32 floor)
                     MUTABLE_SV(newATTRSUB(floor, 0, NULL, NULL, expr)));
             cv_targ = expr->op_targ;
 
-            expr = list(force_list(newUNOP(OP_ENTERSUB, 0, scalar(expr)), TRUE));
+            expr = list(op_force_list(newUNOP(OP_ENTERSUB, 0, scalar(expr))));
         }
 
         rcop = alloc_LOGOP(OP_REGCOMP, scalar(expr), o);
@@ -7871,8 +8034,8 @@ OP *
 Perl_newSLICEOP(pTHX_ I32 flags, OP *subscript, OP *listval)
 {
     return newBINOP(OP_LSLICE, flags,
-            list(force_list(subscript, TRUE)),
-            list(force_list(listval,   TRUE)));
+            list(op_force_list(subscript)),
+            list(op_force_list(listval)));
 }
 
 #define ASSIGN_SCALAR 0
@@ -8053,8 +8216,8 @@ Perl_newASSIGNOP(pTHX_ I32 flags, OP *left, I32 optype, OP *right)
 
         PL_modcount = 0;
         left = op_lvalue(left, OP_AASSIGN);
-        curop = list(force_list(left, TRUE));
-        o = newBINOP(OP_AASSIGN, flags, list(force_list(right, TRUE)), curop);
+        curop = list(op_force_list(left));
+        o = newBINOP(OP_AASSIGN, flags, list(op_force_list(right)), curop);
         o->op_private = (U8)(0 | (flags >> 8));
 
         if (OP_TYPE_IS_OR_WAS(left, OP_LIST))
@@ -8769,7 +8932,7 @@ Perl_newRANGE(pTHX_ I32 flags, OP *left, OP *right)
     flip->op_private =  left->op_type == OP_CONST ? OPpFLIP_LINENUM : 0;
     flop->op_private = right->op_type == OP_CONST ? OPpFLIP_LINENUM : 0;
 
-    /* check barewords before they might be optimized aways */
+    /* check barewords before they might be optimized away */
     if (flip->op_private && cSVOPx(left)->op_private & OPpCONST_STRICT)
         no_bareword_allowed(left);
     if (flop->op_private && cSVOPx(right)->op_private & OPpCONST_STRICT)
@@ -9148,7 +9311,7 @@ Perl_newFOROP(pTHX_ I32 flags, OP *sv, OP *expr, OP *block, OP *cont)
     }
 
     if (expr->op_type == OP_RV2AV || expr->op_type == OP_PADAV) {
-        expr = op_lvalue(force_list(scalar(ref(expr, OP_ITER)), TRUE), OP_GREPSTART);
+        expr = op_lvalue(op_force_list(scalar(ref(expr, OP_ITER))), OP_GREPSTART);
         iterflags |= OPf_STACKED;
     }
     else if (expr->op_type == OP_NULL &&
@@ -9181,7 +9344,7 @@ Perl_newFOROP(pTHX_ I32 flags, OP *sv, OP *expr, OP *block, OP *cont)
         iterflags |= OPf_STACKED;
     }
     else {
-        expr = op_lvalue(force_list(expr, TRUE), OP_GREPSTART);
+        expr = op_lvalue(op_force_list(expr), OP_GREPSTART);
     }
 
     loop = (LOOP*)op_convert_list(OP_ENTERITER, iterflags,
@@ -9532,9 +9695,12 @@ Perl_newDEFEROP(pTHX_ I32 flags, OP *block)
 
     PERL_ARGS_ASSERT_NEWDEFEROP;
 
+    forbid_outofblock_ops(block,
+        (flags & (OPpDEFER_FINALLY << 8)) ? "a \"finally\" block" : "a \"defer\" block");
+
     start = LINKLIST(block);
 
-    /* Hide the block inside an OP_NULL with no exection */
+    /* Hide the block inside an OP_NULL with no execution */
     block = newUNOP(OP_NULL, 0, block);
     block->op_next = block;
 
@@ -12082,6 +12248,36 @@ Perl_ck_exists(pTHX_ OP *o)
 }
 
 OP *
+Perl_ck_helemexistsor(pTHX_ OP *o)
+{
+    PERL_ARGS_ASSERT_CK_HELEMEXISTSOR;
+
+    o = ck_fun(o);
+
+    OP *first;
+    if(!(o->op_flags & OPf_KIDS) ||
+        !(first = cLOGOPo->op_first) ||
+        first->op_type != OP_HELEM)
+        /* As this opcode isn't currently exposed to pure-perl, only core or XS
+         * authors are ever going to see this message. We don't need to list it
+         * in perldiag as to do so would require documenting OP_HELEMEXISTSOR
+         * itself
+         */
+        /* diag_listed_as: SKIPME */
+        croak("OP_HELEMEXISTSOR argument is not a HASH element");
+
+    OP *hvop  = cBINOPx(first)->op_first;
+    OP *keyop = OpSIBLING(hvop);
+    assert(!OpSIBLING(keyop));
+
+    op_null(first); // null out the OP_HELEM
+
+    keyop->op_next = o;
+
+    return o;
+}
+
+OP *
 Perl_ck_rvconst(pTHX_ OP *o)
 {
     SVOP * const kid = cSVOPx(cUNOPo->op_first);
@@ -12702,7 +12898,7 @@ Perl_ck_listiob(pTHX_ OP *o)
 
     kid = cLISTOPo->op_first;
     if (!kid) {
-        o = force_list(o, TRUE);
+        o = op_force_list(o);
         kid = cLISTOPo->op_first;
     }
     if (kid->op_type == OP_PUSHMARK)
@@ -13055,7 +13251,7 @@ Perl_ck_repeat(pTHX_ OP *o)
         OP* kids;
         o->op_private |= OPpREPEAT_DOLIST;
         kids = op_sibling_splice(o, NULL, 1, NULL); /* detach first kid */
-        kids = force_list(kids, TRUE); /* promote it to a list */
+        kids = op_force_list(kids); /* promote it to a list */
         op_sibling_splice(o, NULL, 0, kids); /* and add back */
     }
     else

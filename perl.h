@@ -4147,6 +4147,10 @@ out there, Solaris being the most prominent.
 #define PNf UTF8f
 #define PNfARG(pn) (int)1, (UV)PadnameLEN(pn), (void *)PadnamePV(pn)
 
+#define HvNAMEf "6p"
+#define HvNAMEf_QUOTEDPREFIX "10p"
+
+#define HvNAMEfARG(hv) ((void*)(hv))
 
 #ifdef PERL_CORE
 /* not used; but needed for backward compatibility with XS code? - RMB
@@ -4440,7 +4444,7 @@ typedef        struct crypt_data {     /* straight from /usr/include/crypt.h */
 #define FAKE_BIT_BUCKET
 #endif
 
-/* [perl #22371] Algorimic Complexity Attack on Perl 5.6.1, 5.8.0.
+/* [perl #22371] Algorithmic Complexity Attack on Perl 5.6.1, 5.8.0.
  * Note that the USE_HASH_SEED and similar defines are *NOT* defined by
  * Configure, despite their names being similar to other defines like
  * USE_ITHREADS.  Configure in fact knows nothing about the randomised
@@ -6003,14 +6007,25 @@ typedef void (*XSINIT_t) (pTHX);
 typedef void (*ATEXIT_t) (pTHX_ void*);
 typedef void (*XSUBADDR_t) (pTHX_ CV *);
 
-/* TODO: find somewhere to store this */
 enum Perl_custom_infix_precedence {
-    INFIX_PREC_LOW  =  10, /* non-associative */
-    INFIX_PREC_REL  =  30, /* non-associative, just below `==` */
-    INFIX_PREC_ADD  =  50, /* left-associative, same precedence as `+` */
-    INFIX_PREC_MUL  =  70, /* left-associative, same precedence as `*` */
-    INFIX_PREC_POW  =  90, /* right-associative, same precedence as `**` */
-    INFIX_PREC_HIGH = 110, /* non-associative */
+    /* These numbers are spaced out to give room to insert new values as
+     * required. They form part of the ABI contract with XS::Parse::Infix so
+     * they should not be changed within a stable release cycle, but they can
+     * be freely altered during a development cycle because no ABI guarantees
+     * are made at that time */
+    INFIX_PREC_LOW             =  10, /* non-associative */
+    INFIX_PREC_LOGICAL_OR_LOW  =  30, /* left-associative, as `or` */
+    INFIX_PREC_LOGICAL_AND_LOW =  40, /* left-associative, as `and` */
+    INFIX_PREC_ASSIGN          =  50, /* right-associative, as `=` */
+    INFIX_PREC_LOGICAL_OR      =  70, /* left-associative, as `||` */
+    INFIX_PREC_LOGICAL_AND     =  80, /* left-associative, as `&&` */
+    INFIX_PREC_REL             =  90, /* non-associative, just below `==` */
+    INFIX_PREC_ADD             = 110, /* left-associative, as `+` */
+    INFIX_PREC_MUL             = 130, /* left-associative, as `*` */
+    INFIX_PREC_POW             = 150, /* right-associative, as `**` */
+    INFIX_PREC_HIGH            = 170, /* non-associative */
+    /* Try to keep within the range of a U8 in case we need to split the field
+     * and add flags */
 };
 struct Perl_custom_infix;
 struct Perl_custom_infix {

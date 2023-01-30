@@ -26,7 +26,7 @@ if ( $Config{usecrosscompile} ) {
   skip_all( "Not all files are available during cross-compilation" );
 }
 
-my $tests = 26; # I can't see a clean way to calculate this automatically.
+my $tests = 27; # I can't see a clean way to calculate this automatically.
 
 my %skip = ("regen_perly.pl"    => [qw(perly.act perly.h perly.tab)],
             "regen/keywords.pl" => [qw(keywords.c keywords.h)],
@@ -109,8 +109,8 @@ foreach (@progs) {
     note("./perl $args");
     my $command = "$^X $args";
     system $command
-        and die <<~"HINT";
+        and die <<~'HINT';
     Hint:  A failure in this file can often be corrected by running:
-     ./perl -Ilib $_
+     make regen
 HINT
 }
